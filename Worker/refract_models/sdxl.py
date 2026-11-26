@@ -3,7 +3,7 @@
 from functools import partial
 from pathlib import Path
 
-from .image_input import input_image
+from .image_input import input_image, validate_dimensions
 
 
 def scheduler_for(config, sampler, schedule, prediction=None, zero_snr=None):
@@ -42,7 +42,8 @@ class SDXL:
         if path.suffix.lower() != ".safetensors" or not path.is_file():
             raise ValueError("Generation requires an SDXL safetensors checkpoint")
         bundled = Path(__file__).resolve().parents[1] / "configs" / "sdxl"
-        config = Path(request.get("configPath") or bundled).resolve(strict=True)
+        # Only Refract's installed component configuration may select Python loader classes.
+        config = bundled.resolve(strict=True)
         return config, partial(cls, path, config)
 
     def __init__(self, checkpoint, config):
@@ -106,6 +107,7 @@ class SDXL:
                 if reference.size != size:
                     raise ValueError("The reference image resolution has changed since the job was queued")
                 processing_size = tuple(max(64, ((edge + 7) // 8) * 8) for edge in size)
+                validate_dimensions(*processing_size)
                 if processing_size != size:
                     import numpy as np
 

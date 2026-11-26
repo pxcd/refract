@@ -13,6 +13,7 @@ final class ModelStore: ObservableObject {
         var models: [StudioModel]
         var modelDirectory: URL
         var dismissedPaths: Set<String>
+        var installations: [String: ManagedPackageIdentity]? = nil
     }
     private let trash: (URL) throws -> URL?
     private let index: URL
@@ -51,20 +52,33 @@ final class ModelStore: ObservableObject {
         if directory == nil, readError == nil { Task { await discoverCachedModels() } }
     }
 
-    private func persist(models: [StudioModel], directory: URL, dismissed: Set<String>) throws {
-        if let readError { throw ModelError(readError) }
-        try fm.createDirectory(at: index.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let state = State(models: models, modelDirectory: directory, dismissedPaths: dismissed)
-        try JSONEncoder().encode(state).write(to: index, options: .atomic)
-        self.models = models; modelDirectory = directory; dismissedPaths = dismissed
+    /// Atomic replacement prevents torn writes. The separate, persistent lock makes read/modify/write
+    /// transactions from other Refract processes see the latest index.
+    private func updateState(_ change: (inout State) throws -> Void) throws {
+        let directory = try ManagedModelDirectory.root(at: index.deletingLastPathComponent())
+        let lock = try directory.lock(".model-index.lock", wait: true)
+        defer { withExtendedLifetime(lock) {} }
+        var state: State
+        if try directory.exists(index.lastPathComponent) {
+            let file = try directory.file(index.lastPathComponent)
+            state = try JSONDecoder().decode(State.self, from: file.readToEnd() ?? Data())
+        } else {
+            state = State(models: [], modelDirectory: directory.url.appendingPathComponent("Models"), dismissedPaths: [])
+        }
+        try change(&state)
+        try JSONEncoder().encode(state).write(to: directory.url.appendingPathComponent(index.lastPathComponent), options: .atomic)
+        models = state.models
+        modelDirectory = state.modelDirectory
+        dismissedPaths = state.dismissedPaths
+        readError = nil
     }
 
     func setModelDirectory(_ url: URL) throws {
         guard transfers.isEmpty else { throw ModelError("Finish or cancel current downloads before changing model storage.") }
         guard url.isFileURL else { throw ModelError("Choose a local folder.") }
-        try fm.createDirectory(at: url, withIntermediateDirectories: true)
-        guard fm.isWritableFile(atPath: url.path) else { throw ModelError("The selected folder is not writable.") }
-        try persist(models: models, directory: url.standardizedFileURL, dismissed: dismissedPaths)
+        let selected = try ManagedModelDirectory.root(at: url)
+        guard fm.isWritableFile(atPath: selected.url.path) else { throw ModelError("The selected folder is not writable.") }
+        try updateState { $0.modelDirectory = selected.url }
         downloads = [:]
     }
 
@@ -75,13 +89,24 @@ final class ModelStore: ObservableObject {
         return models.first(where: { $0.id == model.id }) ?? model
     }
 
-    private func register(_ model: StudioModel) throws {
-        var result = models.filter { $0.path != model.path || $0.id == model.id }
-        if let i = result.firstIndex(where: { $0.id == model.id }) {
-            if result[i].managed && !model.managed && fm.fileExists(atPath: result[i].path) { return }
-            result[i] = model
-        } else { result.append(model) }
-        try persist(models: result.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }, directory: modelDirectory, dismissed: dismissedPaths.subtracting([model.path]))
+    private func register(_ model: StudioModel, discovered: Bool = false, installation: ManagedPackageIdentity? = nil) throws {
+        try updateState { state in
+            if discovered && (state.dismissedPaths.contains(model.path) || state.models.contains(where: { $0.id == model.id })) { return }
+            for old in state.models where old.path == model.path && old.id != model.id {
+                state.installations?[old.id] = nil
+            }
+            state.models.removeAll { $0.path == model.path && $0.id != model.id }
+            if let i = state.models.firstIndex(where: { $0.id == model.id }) {
+                if state.models[i].managed && !model.managed && fm.fileExists(atPath: state.models[i].path) { return }
+                state.models[i] = model
+            } else { state.models.append(model) }
+            state.models.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            state.dismissedPaths.remove(model.path)
+            if let installation {
+                if state.installations == nil { state.installations = [:] }
+                state.installations?[model.id] = installation
+            } else { state.installations?[model.id] = nil }
+        }
     }
 
     private func discoverCachedModels() async {
@@ -89,7 +114,7 @@ final class ModelStore: ObservableObject {
             guard !dismissedPaths.contains(url.path), !models.contains(where: { $0.path == url.path }) else { continue }
             do {
                 let model = try await inspector.inspect(at: url, kind: .generation)
-                if !dismissedPaths.contains(url.path), !models.contains(where: { $0.id == model.id }) { try register(model) }
+                try register(model, discovered: true)
             } catch { notice = "Could not register \(url.lastPathComponent): \(error.localizedDescription)" }
         }
     }
@@ -104,11 +129,14 @@ final class ModelStore: ObservableObject {
     }
 
     func unlink(_ model: StudioModel) throws {
-        guard !model.managed, models.contains(model) else {
-            throw ModelError("Choose a linked model to unlink from Refract.")
+        try updateState { state in
+            guard !model.managed, state.models.contains(model) else {
+                throw ModelError("Choose a linked model to unlink from Refract.")
+            }
+            state.models.removeAll { $0.id == model.id }
+            state.dismissedPaths.insert(model.path)
+            state.installations?[model.id] = nil
         }
-        try persist(models: models.filter { $0.id != model.id }, directory: modelDirectory,
-                    dismissed: dismissedPaths.union([model.path]))
     }
 
     struct ModelRemoval {
@@ -127,60 +155,101 @@ final class ModelStore: ObservableObject {
     }
 
     func remove(_ removal: ModelRemoval) throws {
-        if let readError { throw ModelError(readError) }
         let record = removal.model
-        guard models.contains(record), let current = self.removal(for: record), current.target == removal.target else {
+        guard let current = self.removal(for: record), current.target == removal.target,
+              current.target.lastPathComponent == current.entry.id,
+              current.target.deletingLastPathComponent().lastPathComponent == "Refract Packages" else {
             throw ModelError("The model location changed. Open the confirmation again.")
         }
-        let target = current.target
         let entry = current.entry
+        let root = current.target.deletingLastPathComponent().deletingLastPathComponent()
         if transfers[entry.id] != nil { throw ModelError("Finish or cancel the model download first.") }
-        let remaining = models.filter { $0.id != record.id }
-        let dismissed = dismissedPaths.union([record.path])
-        var trashed: URL?
-        if fm.fileExists(atPath: target.path) {
-            guard target.lastPathComponent == entry.id,
-                  target.deletingLastPathComponent().lastPathComponent == "Refract Packages",
-                  (try? target.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
-                  (try? String(contentsOf: target.appendingPathComponent(Self.marker), encoding: .utf8)) == entry.provenanceID else {
-                throw ModelError("The package ownership record does not match.")
-            }
-            try verifyTrashContents(target, entry: entry)
-            trashed = try trash(target)
+        func forget(_ state: inout State) throws {
+            guard state.models.contains(record) else { throw ModelError("The registered model changed. Reopen its details.") }
+            state.models.removeAll { $0.id == record.id }
+            state.dismissedPaths.insert(record.path)
+            state.installations?[record.id] = nil
         }
+        guard fm.fileExists(atPath: current.target.deletingLastPathComponent().path) else {
+            // An offline or removed library has no package to trash. Never recreate its mount path.
+            try updateState(forget)
+            downloads[entry.id] = nil
+            return
+        }
+        // Take package locks before the index lock in every operation that needs both.
+        let packages = try packageDirectory(root: root, create: false)
+        let lease = try packages.lock(lockName(entry))
+        defer { withExtendedLifetime(lease) {} }
+        let target = packages.url.appendingPathComponent(entry.id, isDirectory: true)
+        var trashed: URL?
         do {
-            try persist(models: remaining, directory: modelDirectory, dismissed: dismissed)
+            try updateState { state in
+                let expected = state.installations?[record.id]
+                try forget(&state)
+                if try packages.exists(entry.id) {
+                    let directory = try packages.child(entry.id)
+                    if let expected, try !expected.matches(directory.identity()) {
+                        throw ModelError("The registered package location changed. Reverify the model before removing it.")
+                    }
+                    try checkMarker(directory, entry: entry)
+                    _ = try inventory(directory, entry: entry)
+                    trashed = try trash(target)
+                }
+            }
             downloads[entry.id] = nil
         } catch {
-            if let trashed, !fm.fileExists(atPath: target.path) {
-                try fm.moveItem(at: trashed, to: target)
-            }
+            if let trashed, !(try packages.exists(entry.id)) { try fm.moveItem(at: trashed, to: target) }
             throw error
         }
     }
 
-    private func verifyTrashContents(_ directory: URL, entry: CatalogModel) throws {
-        var folders = Set<String>()
-        for file in entry.files {
-            var parent = (file.path as NSString).deletingLastPathComponent
-            while !parent.isEmpty && folders.insert(parent).inserted {
-                parent = (parent as NSString).deletingLastPathComponent
-            }
-        }
-        let permitted = Set(entry.files.map(\.path) + [Self.marker, ".DS_Store"]).union(folders).union(folders.map { $0 + "/.DS_Store" })
-        guard let children = fm.enumerator(atPath: directory.path),
-              children.allObjects.allSatisfy({ ($0 as? String).map(permitted.contains) == true }) else {
-            throw ModelError("This package contains additional files. Move those files out before removing it.")
+    private func packageDirectory(root: URL, create: Bool = true) throws -> ManagedModelDirectory {
+        try ManagedModelDirectory.root(at: root, create: create).child("Refract Packages", create: create)
+    }
+
+    private func stagingName(_ entry: CatalogModel) -> String { ".\(entry.id).partial" }
+    private func lockName(_ entry: CatalogModel) -> String { ".\(entry.id).lock" }
+
+    private func checkMarker(_ directory: ManagedModelDirectory, entry: CatalogModel) throws {
+        let marker = try directory.file(Self.marker)
+        let expected = Data(entry.provenanceID.utf8)
+        guard try marker.read(upToCount: expected.count + 1) == expected else {
+            throw ModelError("The package ownership record does not match this catalog revision.")
         }
     }
 
-    private func stagingFolder(for entry: CatalogModel, root: URL) -> URL {
-        root.appendingPathComponent("Refract Packages/.\(entry.id).partial", isDirectory: true)
+    /// Only manifest files, their containing folders, the marker and Finder metadata belong to us.
+    private func inventory(_ root: ManagedModelDirectory, entry: CatalogModel) throws -> [(String, Bool)] {
+        let files = Set(entry.files.map(\.path) + [Self.marker])
+        var folders: Set<String> = []
+        for file in entry.files {
+            var folder = (file.path as NSString).deletingLastPathComponent
+            while !folder.isEmpty, folders.insert(folder).inserted { folder = (folder as NSString).deletingLastPathComponent }
+        }
+        var contents: [(String, Bool)] = []
+        func inspect(_ directory: ManagedModelDirectory, prefix: String) throws {
+            for name in try directory.names() {
+                let path = prefix + name
+                if folders.contains(path) {
+                    try inspect(directory.child(name), prefix: path + "/")
+                    contents.append((path, true))
+                } else if files.contains(path) || name == ".DS_Store" {
+                    _ = try directory.file(name)
+                    contents.append((path, false))
+                } else {
+                    throw ModelError("This package contains additional files. Move those files out before continuing.")
+                }
+            }
+        }
+        try inspect(root, prefix: "")
+        return contents
     }
 
     func hasPartialDownload(_ entry: CatalogModel) -> Bool {
-        let marker = stagingFolder(for: entry, root: modelDirectory).appendingPathComponent(Self.marker)
-        return (try? String(contentsOf: marker, encoding: .utf8)) == entry.provenanceID
+        guard fm.fileExists(atPath: modelDirectory.appendingPathComponent("Refract Packages/\(stagingName(entry))/\(Self.marker)").path),
+              let packages = try? packageDirectory(root: modelDirectory, create: false),
+              let partial = try? packages.child(stagingName(entry)) else { return false }
+        return (try? checkMarker(partial, entry: entry)) != nil
     }
 
     func cancelDownload(_ entry: CatalogModel) throws {
@@ -190,20 +259,29 @@ final class ModelStore: ObservableObject {
             transfer.task.cancel()
             return
         }
-        try discardStaging(for: entry, root: modelDirectory)
+        guard fm.fileExists(atPath: modelDirectory.appendingPathComponent("Refract Packages").path) else {
+            downloads[entry.id] = nil
+            return
+        }
+        let packages = try packageDirectory(root: modelDirectory, create: false)
+        let lease = try packages.lock(lockName(entry))
+        defer { withExtendedLifetime(lease) {} }
+        try discardStaging(for: entry, in: packages)
         downloads[entry.id] = nil
     }
 
-    private func discardStaging(for entry: CatalogModel, root: URL) throws {
-        let staging = stagingFolder(for: entry, root: root)
-        guard fm.fileExists(atPath: staging.path) else { return }
-        let resolvedRoot = root.resolvingSymlinksInPath()
-        guard staging.resolvingSymlinksInPath().path == stagingFolder(for: entry, root: resolvedRoot).path,
-              (try? String(contentsOf: staging.appendingPathComponent(Self.marker), encoding: .utf8)) == entry.provenanceID else {
-            throw ModelError("The partial download does not belong to this model revision.")
+    private func discardStaging(for entry: CatalogModel, in packages: ManagedModelDirectory) throws {
+        let name = stagingName(entry)
+        guard try packages.exists(name) else { return }
+        let staging = try packages.child(name)
+        try checkMarker(staging, entry: entry)
+        let contents = try inventory(staging, entry: entry)
+        for (path, isDirectory) in contents where path != Self.marker {
+            let (directory, leaf) = try staging.parent(of: path)
+            try directory.remove(leaf, directory: isDirectory)
         }
-        try verifyTrashContents(staging, entry: entry)
-        try fm.removeItem(at: staging)
+        try staging.remove(Self.marker)
+        try packages.remove(name, directory: true)
     }
 
     func download(_ requested: CatalogModel) async throws {
@@ -211,25 +289,31 @@ final class ModelStore: ObservableObject {
             throw ModelError("This model uses local import or requires qualification.")
         }
         guard transfers[entry.id] == nil else { throw ModelError("This model is already downloading.") }
+        let packages = try packageDirectory(root: modelDirectory)
+        let lease = try packages.lock(lockName(entry))
+        defer { withExtendedLifetime(lease) {} }
         downloads[entry.id] = .init(fraction: 0, message: "Preparing download", isRunning: true)
-        let root = modelDirectory
         let token = UUID()
-        let final = root.appendingPathComponent("Refract Packages/\(entry.id)", isDirectory: true)
-        let staging = stagingFolder(for: entry, root: root)
-        let task = Task { try await acquire(entry, final: final, staging: staging, token: token) }
+        let task = Task { try await acquire(entry, in: packages, token: token) }
         transfers[entry.id] = Transfer(token: token, task: task)
         defer { transfers[entry.id] = nil }
         do {
             let download = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
             if downloads[entry.id]?.isCancelling == true { throw CancellationError() }
             try Task.checkCancellation()
-            // After this point there is no suspension between moving the verified package and registering it.
-            if download.fromStaging { try fm.moveItem(at: staging, to: final) }
-            try register(download.model)
+            if download.fromStaging { try packages.move(stagingName(entry), to: entry.id) }
+            do {
+                let binding = try packages.child(entry.id).identity()
+                try register(download.model, installation: binding)
+            }
+            catch {
+                if download.fromStaging { try packages.move(entry.id, to: stagingName(entry)) }
+                throw error
+            }
             downloads[entry.id] = .init(fraction: 1, message: "Installed", isRunning: false)
         } catch {
             if downloads[entry.id]?.isCancelling == true {
-                do { try discardStaging(for: entry, root: root) }
+                do { try discardStaging(for: entry, in: packages) }
                 catch {
                     downloads[entry.id] = .init(fraction: 0, message: error.localizedDescription, isRunning: false)
                     throw error
@@ -243,39 +327,46 @@ final class ModelStore: ObservableObject {
         }
     }
 
-    private func acquire(_ entry: CatalogModel, final: URL, staging: URL, token: UUID) async throws
+    private func acquire(_ entry: CatalogModel, in packages: ManagedModelDirectory, token: UUID) async throws
         -> (model: StudioModel, fromStaging: Bool) {
         try Task.checkCancellation()
-        let parent = final.deletingLastPathComponent()
-        try fm.createDirectory(at: parent, withIntermediateDirectories: true)
-        if fm.fileExists(atPath: final.path) {
-            guard (try? String(contentsOf: final.appendingPathComponent(Self.marker), encoding: .utf8)) == entry.provenanceID else { throw ModelError("The destination exists and is owned by another file or package.") }
-            return (try await inspector.installedModel(in: final, entry: entry), false)
+        if try packages.exists(entry.id) {
+            let installed = try packages.child(entry.id)
+            try checkMarker(installed, entry: entry)
+            _ = try inventory(installed, entry: entry)
+            return (try await inspector.installedModel(in: installed.url, entry: entry), false)
         }
-        let marker = staging.appendingPathComponent(Self.marker)
-        if fm.fileExists(atPath: staging.path) {
-            guard (try? String(contentsOf: marker, encoding: .utf8)) == entry.provenanceID else { throw ModelError("The download staging folder belongs to another revision.") }
+        let name = stagingName(entry)
+        let resumed = try packages.exists(name)
+        let staging = try packages.child(name, create: !resumed)
+        if resumed {
+            try checkMarker(staging, entry: entry)
+            _ = try inventory(staging, entry: entry)
         } else {
-            try fm.createDirectory(at: staging, withIntermediateDirectories: false)
-            try entry.provenanceID.write(to: marker, atomically: true, encoding: .utf8)
+            let marker = try staging.file(Self.marker, writing: true, create: true, exclusive: true)
+            try marker.write(contentsOf: Data(entry.provenanceID.utf8))
+            try marker.close()
         }
+        try staging.makePrivate()
         var completed: Int64 = 0
         for file in entry.files {
             try Task.checkCancellation()
-            let target = staging.appendingPathComponent(file.path)
-            let dir = target.deletingLastPathComponent()
-            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-            guard target.resolvingSymlinksInPath().path == parent.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent("Refract Packages/.\(entry.id).partial/\(file.path)").path else {
-                throw ModelError("The partial download points outside its managed folder.")
-            }
-            var received = (try? fm.attributesOfItem(atPath: target.path)[.size] as? NSNumber)?.int64Value ?? 0
+            let target = staging.url.appendingPathComponent(file.path)
+            let (directory, leaf) = try staging.parent(of: file.path, create: true)
+            let output = try directory.file(leaf, writing: true, create: true)
+            defer { try? output.close() }
+            var received = Int64(try output.seekToEnd())
             if received >= file.size {
-                do { try await inspector.check(file, at: target); completed += file.size; continue }
-                catch is CancellationError { throw CancellationError() }
-                catch { try fm.removeItem(at: target); received = 0 }
+                if received == file.size, try await inspector.digest(target, gitBlob: file.digest.count == 40) == file.digest {
+                    completed += file.size
+                    continue
+                }
+                // Only a definite size/digest mismatch invalidates a prefix. Never remove a pathname recursively.
+                try output.truncate(atOffset: 0)
+                received = 0
             }
             let start = completed
-            let transfer = ModelTransfer(destination: target, received: received, size: file.size) { [weak self] count in
+            let transfer = ModelTransfer(output: output, received: received, size: file.size) { [weak self] count in
                 Task { @MainActor in
                     guard let self, self.transfers[entry.id]?.token == token,
                           self.downloads[entry.id]?.isCancelling != true else { return }
@@ -283,14 +374,15 @@ final class ModelStore: ObservableObject {
                 }
             }
             try await transfer.run(url: entry.downloadURL(file))
-            do { try await inspector.check(file, at: target) }
-            catch is CancellationError { throw CancellationError() }
-            catch { try fm.removeItem(at: target); throw error }
+            try output.close()
+            try await inspector.check(file, at: target)
             completed += file.size
         }
         try Task.checkCancellation()
         downloads[entry.id] = .init(fraction: 1, message: "Verifying package", isRunning: true)
-        let checked = try await inspector.installedModel(in: staging, entry: entry)
+        _ = try inventory(staging, entry: entry)
+        let checked = try await inspector.installedModel(in: staging.url, entry: entry)
+        let final = packages.url.appendingPathComponent(entry.id, isDirectory: true)
         let target = entry.checkpointFile.map { final.appendingPathComponent($0.path) } ?? final
         let model = StudioModel(id: checked.id, name: checked.name, kind: checked.kind, path: target.path,
                                 variant: checked.variant, configPath: checked.configPath, precision: checked.precision,

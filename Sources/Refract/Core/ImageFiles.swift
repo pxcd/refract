@@ -4,13 +4,27 @@ import UniformTypeIdentifiers
 
 enum ImageFiles {
     static func dimensions(of url: URL) throws -> (Int, Int) {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let info = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
-              let w = info[kCGImagePropertyPixelWidth as String] as? Int,
-              let h = info[kCGImagePropertyPixelHeight as String] as? Int, w > 0, h > 0 else {
-            throw StudioError("Cannot read the image dimensions of " + url.lastPathComponent)
+        guard url.isFileURL, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            throw StudioError("Cannot open the selected image.")
         }
+        return try dimensions(of: source)
+    }
+
+    static func dimensions(of source: CGImageSource) throws -> (Int, Int) {
+        guard let info = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let w = info[kCGImagePropertyPixelWidth as String] as? Int,
+              let h = info[kCGImagePropertyPixelHeight as String] as? Int else {
+            throw StudioError("Cannot read the image dimensions.")
+        }
+        try validateDimensions(width: w, height: h)
         return (5...8).contains(info[kCGImagePropertyOrientation as String] as? Int ?? 1) ? (h,w) : (w,h)
+    }
+
+    static func validateDimensions(width: Int, height: Int) throws {
+        guard width > 0, height > 0, width <= 65_535, height <= 65_535,
+              width <= (64 * 1024 * 1024) / height else {
+            throw StudioError("Images must fit within 67 megapixels and 65,535 pixels per side.")
+        }
     }
 
     static func outputDimensions(for input: URL, options: EnhancementOptions) throws -> (Int, Int) {
@@ -25,6 +39,7 @@ enum ImageFiles {
         guard width >= 1, height >= 1, width <= 65535, height <= 65535 else {
             throw StudioError("The requested output dimensions are outside the supported image range.")
         }
+        try validateDimensions(width: Int(width), height: Int(height))
         return (Int(width),Int(height))
     }
 
@@ -58,6 +73,7 @@ enum ImageFiles {
         guard let input = CGImageSourceCreateWithURL(image as CFURL, nil) else {
             throw StudioError("Cannot read " + image.lastPathComponent)
         }
+        _ = try dimensions(of: input)
         let info = CGImageSourceCopyPropertiesAtIndex(input, 0, nil) as? [CFString: Any]
         let orientation = info?[kCGImagePropertyOrientation] as? Int ?? 1
         let decoded: CGImage?

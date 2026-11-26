@@ -108,6 +108,38 @@ struct GenerationHistoryEntry: Identifiable {
     }
 }
 
+/// Explicit export schema: job snapshots and worker requests contain machine-local paths.
+struct SharedGenerationSettings: Encodable {
+    let model: String
+    let prompt: String
+    let negativePrompt: String
+    let seed: Int
+    let width: Int
+    let height: Int
+    let sampling: SamplingPreset
+    let loras: [LoRAChoice]
+    let referenceStrength: Double?
+    let enhancementModel: String?
+    let enhancement: EnhancementOptions?
+
+    init?(job: StudioJob, result: StudioResult, image: URL) {
+        guard let generator = job.recipe.generator, job.results.contains(where: { $0.id == result.id }),
+              image == result.original || image == result.enhanced else { return nil }
+        let options = job.recipe.generation
+        model = generator.id
+        prompt = options.prompt
+        negativePrompt = options.negativePrompt
+        seed = result.seed
+        width = options.width
+        height = options.height
+        sampling = SamplingPreset(options)
+        loras = options.loras
+        referenceStrength = job.recipe.reference == nil ? nil : options.strength
+        enhancementModel = image == result.enhanced ? job.recipe.enhancer?.id : nil
+        enhancement = enhancementModel == nil ? nil : job.recipe.enhancement
+    }
+}
+
 struct InputImage: Codable {
     let url: URL
     let size: Int?

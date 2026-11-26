@@ -39,6 +39,31 @@ final class ImageOrientationTests: XCTestCase {
         XCTAssertGreaterThan(bottom[2], bottom[0] + 80)
     }
 
+    @MainActor func testSameFormatSaveAsStripsEmbeddedCameraMetadata() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = folder.appendingPathComponent("camera.jpg"), saved = folder.appendingPathComponent("export.jpg")
+        let context = try XCTUnwrap(CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8,
+            bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        let original = try XCTUnwrap(CGImageDestinationCreateWithURL(source as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        let tags: [CFString: Any] = [kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 10.0, kCGImagePropertyGPSLatitudeRef: "N"],
+                                    kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFArtist: "Test Camera Owner"]]
+        CGImageDestinationAddImage(original, try XCTUnwrap(context.makeImage()), tags as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(original))
+        func properties(_ url: URL) throws -> [CFString: Any] {
+            let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+            return try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])
+        }
+        XCTAssertNotNil(try properties(source)[kCGImagePropertyGPSDictionary])
+        let store = StudioStore(models: ModelStore(directory: folder), worker: WorkerClient(), directory: folder, defaults: isolatedDefaults())
+        try store.save(source, to: saved)
+        let result = try properties(saved)
+        XCTAssertNil(result[kCGImagePropertyGPSDictionary])
+        XCTAssertNil((result[kCGImagePropertyTIFFDictionary] as? [CFString: Any])?[kCGImagePropertyTIFFArtist])
+        XCTAssertThrowsError(try store.save(source, to: source))
+    }
+
     private func color(in image: CGImage, atY y: Int) throws -> [Int] {
         let sample = try XCTUnwrap(image.cropping(to: .init(x: image.width / 2, y: y, width: 1, height: 1)))
         var rgba = [UInt8](repeating: 0, count: 4)

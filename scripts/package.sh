@@ -16,13 +16,16 @@ cp Resources/Refract.icns "$app/Contents/Resources/Refract.icns"
 cp "$products/Refract" "$app/Contents/MacOS/Refract"
 /usr/bin/rsync -a --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' Worker/ "$app/Contents/Resources/Worker/"
 /usr/bin/rsync -a --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' "$runtime/" "$app/Contents/Resources/runtime/"
-# Package builds may run from a detached process without an inherited standard input.
-"$app/Contents/Resources/runtime/bin/python3.12" -I -B -c 'from importlib.metadata import version; from pathlib import Path; import sys; Path(sys.argv[1]).write_text("\n".join(f"{p}=={version(p)}" for p in ("diffusers","torch","mlx","mlx-metal","mlx-gen","transformers","peft","safetensors","Pillow"))+"\n")' "$app/Contents/Resources/runtime-versions.txt" </dev/null
-cat scripts/runtime-macos27.sha256 >> "$app/Contents/Resources/runtime-versions.txt"
+bundled="$app/Contents/Resources/runtime"
+identity="$app/Contents/Resources/runtime-versions.txt"
+# Check the copied tree and its native deployment targets without executing the candidate runtime.
+/usr/bin/python3 -I -B -S scripts/runtime-tree.py "$bundled" > "$identity"
+cat scripts/runtime-requirements.txt >> "$identity"
+cat scripts/runtime-macos27.sha256 >> "$identity"
 (cd "$app/Contents/Resources" && find Worker -type f | LC_ALL=C sort | while IFS= read -r file; do
     shasum -a 256 "$file"
 done >> runtime-versions.txt)
-"$runtime/bin/python3.12" -I -B scripts/runtime-audit.py "$app" </dev/null
+/usr/bin/python3 -I -B -S scripts/runtime-audit.py "$app"
 /usr/bin/codesign --force --sign - --identifier studio.refract.mac "$app"
 /usr/bin/codesign --verify --deep --strict "$app"
 if [ -e build/Refract.app ]; then mv build/Refract.app "$stage/previous.app"; fi

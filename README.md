@@ -8,7 +8,7 @@ You may clone, build, and run Refract for personal use under the [Refract Person
 
 ## Build
 
-Use Xcode's Swift toolchain and uv on an Apple Silicon Mac. From the repository root:
+Use Xcode’s Swift toolchain on an Apple Silicon Mac. From the repository root:
 
 ```sh
 scripts/runtime.sh
@@ -17,15 +17,15 @@ scripts/package.sh
 open build/Refract.app
 ```
 
-The runtime preparation step downloads a private CPython 3.12 and the pinned Darwin arm64 wheels. The packaged app carries its own runtime and runs inference offline. Model downloads are explicit network operations. The package script ad-hoc signs the personal build and writes its source and artifact identity to `build/provenance.json`.
+Runtime preparation checks the SHA-256 of the CPython archive and every pinned wheel. Packaging independently verifies the assembled runtime against the locked file tree. If an older local runtime fails verification, run `scripts/runtime.sh --rebuild`. The packaged app carries its own runtime and runs inference offline. Model downloads are explicit network operations. The package script ad-hoc signs the personal build and writes its source and artifact identity to `build/provenance.json`.
 
 ## Models
 
 Open **Models** to browse the catalog or import a local file. **Your Models** groups downloads and local imports at the top. Use the Generation, Enhancement, and LoRAs filters to narrow the list.
 
-- **Installed** models are downloads managed by Refract. Use **Move to Trash** to remove their files. You can also cancel an in-progress download to discard its partial files.
-- **Linked** models use their existing files in place. Use **Show in Finder** to locate them or **Unlink from Refract** to remove the catalog entry while keeping the files available to other apps.
-- Import an SDXL checkpoint or compatible LoRA as a `.safetensors` file. Import a prepared MLX model as a folder matching a supported catalog package. Refract can discover cached Juggernaut XI checkpoints by reference.
+- **Installed** models are downloads managed by Refract. Use **Move to Trash** to remove their files. You can cancel a download to discard its partial files. Choose a storage folder whose contents only your account can change.
+- **Linked** models stay in their original location. For inference, Refract prepares a private, verified snapshot of the files its worker can read. APFS normally clones local files without duplicating their data. Models on another volume may require temporary space on the startup disk. Use **Show in Finder** to locate them or **Unlink from Refract** to remove the catalog entry while keeping the files available to other apps.
+- Import an SDXL checkpoint or compatible LoRA as a `.safetensors` file. Import a prepared MLX model as a folder matching a supported catalog package. SDXL uses the bundled loader configuration. Previously linked checkpoints with verified configuration fingerprints can retain their prediction type and zero-terminal-SNR defaults. Refract can discover cached Juggernaut XI checkpoints by reference.
 
 | Model | Workflow | Recommended unified memory |
 | --- | --- | ---: |
@@ -43,13 +43,13 @@ In **Generate**, choose a model and enter your prompt. With SDXL, use **Advanced
 
 In **Enhance**, drop in images or a folder. Choose **1×** to restore at the original output dimensions or choose a higher scale to upscale. Drag the divider to compare the original and enhanced image. For original-size restoration of images up to 256 pixels on the long edge, Refract runs one 2× restoration and downsamples to the original size to reduce changes to faces and lettering.
 
-Open **Job Queue** to track progress, retry an unfinished job, or use **Cancel All Queued Jobs** to remove waiting jobs while the current job finishes. Refract saves originals and enhancements separately, with a JSON sidecar for each. Choose PNG, JPEG, or TIFF in Settings.
+Open **Job Queue** to track progress, retry an unfinished job, or use **Cancel All Queued Jobs** to remove waiting jobs while the current job finishes. Refract saves originals and enhancements separately. Each has a small JSON receipt for interrupted-job recovery. New recovery receipts omit prompts and filesystem paths. **Save As** exports pixels, and **Include generation settings** adds a separate JSON file with the prompt, exact seed, model identifiers, and sampling settings. Choose PNG, JPEG, or TIFF in Settings.
 
-Open **History** to search past renders by prompt, model, or date. Use a result’s **Use Settings** action, or right-click a generated thumbnail and choose **Use Settings from This Image**, to restore the prompts, exact seed, model, and LoRAs. History remains searchable after clearing the filmstrip. **Clear History** hides those entries while leaving your files and job queue available.
+Open **History** to search past renders by prompt, model, or date. Use a result’s **Use Settings** action, or right-click a generated thumbnail and choose **Use Settings from This Image**, to restore the prompts, exact seed, model, and LoRAs. History remains searchable after clearing the filmstrip. **Manage History → Clear History** hides those entries and keeps the job records. **Erase Finished Generation Jobs** removes the saved recipes and thumbnails for finished jobs from Refract. Previously saved image files, companion files, and exported settings stay on disk. Receipts created by older versions can contain prompts and local paths.
 
 ## Runtime and licenses
 
-Exports use the model’s sRGB image output and preserve source files.
+Exports use the model’s sRGB image output and preserve source files. Refract supports images up to 67,108,864 pixels and 65,535 pixels per side. Fit previews decode at display size. Zooming requests the full-resolution image within that budget.
 
 The Swift app calls Diffusers/PyTorch MPS for SDXL and MLX-Gen/MLX for the other generation models and SeedVR2 over a private JSON-lines subprocess. The pinned wheels include their original package notices. See the SDXL configuration license and source information under `Worker/configs`. Juggernaut weights are user-provided. ByteDance publishes the original SeedVR2 3B and 7B weights under Apache-2.0. Model-specific terms apply separately from runtime code. In the pinned OpenCV wheel, FFmpeg reports GPLv3 or later. PyAV also includes codec libraries. A public release needs a redistribution review and the appropriate notices and source provisions.
 

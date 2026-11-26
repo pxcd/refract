@@ -17,6 +17,7 @@ os.environ.update(
 # Load adapters from the worker's own code directory in that mode.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from refract_models import ADAPTERS
+from refract_models.image_input import validate_dimensions
 
 
 class Worker:
@@ -36,6 +37,7 @@ class Worker:
     def run(self, request, emit):
         from PIL import ImageCms
 
+        validate_dimensions(request["width"], request["height"])
         operation = request["operation"]
         if operation not in ("generate", "enhance"):
             raise ValueError(f"Unknown operation: {operation}")
