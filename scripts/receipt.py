@@ -35,7 +35,7 @@ def tree_identity(base, paths):
         value.update((relative + "\0" + identity + "\n").encode())
     return value.hexdigest()
 
-source = [root / "Package.swift", root / ".gitignore", root / "README.md"]
+source = [root / "Package.swift", root / ".gitignore", root / "README.md", root / "LICENSE"]
 for name in (".github", "Resources", "Sources", "Tests", "Worker", "scripts"):
     source.extend(p for p in (root / name).rglob("*") if "__pycache__" not in p.parts)
 data = {
