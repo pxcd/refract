@@ -38,11 +38,12 @@ struct CatalogModel: Identifiable, Sendable {
     let repository: String
     let revision: String?
     let files: [File]
+    var checkpointFilename: String? = nil
     var bytes: Int64 { files.reduce(0) { $0 + $1.size } }
     var sourceURL: URL { URL(string: "https://huggingface.co/\(repository)")! }
     var memoryEstimate: String { RefractCatalog.memoryNote(for: variant) }
     var canDownload: Bool { revision != nil && !files.isEmpty }
-    var checkpointFile: File? { kind == .generation ? files.first { $0.path.hasSuffix(".safetensors") } : nil }
+    var checkpointFile: File? { files.first { $0.path == checkpointFilename } }
     var provenanceID: String { "hf:\(repository)@\(revision ?? "unqualified")" }
     var identity: String { checkpointFile?.digest ?? provenanceID }
     func downloadURL(_ file: File) -> URL {
@@ -67,7 +68,7 @@ enum RefractCatalog {
             .init("sd_xl_base_1.0.safetensors", 6938078334, "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b"),
             .init("LICENSE.md", 14109, "af7e355e31c0d976933aa0d06759611151ad8c39"),
             .init("README.md", 8668, "3de812966870aa7122954891ce74faabc77335a9")
-        ]),
+        ], checkpointFilename: "sd_xl_base_1.0.safetensors"),
         .init(id: "seedvr2-3b-q8", name: "SeedVR2 3B", kind: .enhancement, variant: "seedvr2-3b", precision: "MLX Q8 / BF16", license: "Apache-2.0", detail: "General-purpose photographic restoration and upscaling. Start here for smaller memory use.", repository: "AbstractFramework/seedvr2-3b-8bit", revision: "6e6b162d1e96c873ad93645508bbc4636814c0c7", files: [
             .init("transformer/0.safetensors", 2142146507, "a68bb0bf17470d417678b16dd51ec8a6410b7c533886aefeda47aedfe0235145"),
             .init("transformer/1.safetensors", 2075381973, "85eae079a8138a63062cb05e03c5d45831aeeabb6332f23a1cc07691cc24f75f"),

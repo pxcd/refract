@@ -6,6 +6,7 @@ struct RefractApp: App {
     @StateObject private var models: ModelStore
     @StateObject private var studio: StudioStore
     @StateObject private var fileSelection = StudioFileSelection()
+    @StateObject private var modelNavigation = ModelManagerNavigation()
 
     init() {
         let catalog = ModelStore()
@@ -23,10 +24,18 @@ struct RefractApp: App {
                 .handlesExternalEvents(preferring: ["file:"], allowing: ["file:"])
                 .environmentObject(studio)
                 .environmentObject(models)
+                .environmentObject(modelNavigation)
         } defaultValue: { "main" }
         .defaultSize(width: 1180, height: 800)
         .handlesExternalEvents(matching: ["file:"])
         .commands { OpenImagesCommands(fileSelection: fileSelection) }
+        Window("Models", id: "models") {
+            ModelManagerView()
+                .environmentObject(studio)
+                .environmentObject(models)
+                .environmentObject(modelNavigation)
+        }
+        .defaultSize(width: 940, height: 580)
         Settings {
             StudioSettingsView()
                 .environmentObject(studio)

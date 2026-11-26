@@ -18,7 +18,16 @@ struct GenerationControls: View {
     @EnvironmentObject private var studio: StudioStore
     @EnvironmentObject private var models: ModelStore
     @State private var advanced = false
-    @State private var showLoRAManager = false
+    @State private var referenceDimensions: (URL, ModelImageSize)?
+
+    private var usesReferenceResolution: Bool { studio.generation.reference != nil && studio.generation.preserveReferenceSize == true }
+
+    private var outputDimensions: ModelImageSize? {
+        if usesReferenceResolution {
+            return referenceDimensions.flatMap { $0.0 == studio.generation.reference ? $0.1 : nil }
+        }
+        return ModelImageSize(width: studio.generation.width, height: studio.generation.height)
+    }
 
     private let presets = [(1024, 1024, "Square"), (832, 1216, "Portrait"),
                            (1216, 832, "Landscape"), (768, 1344, "Tall"), (1344, 768, "Wide")]
@@ -41,6 +50,10 @@ struct GenerationControls: View {
                     Button { studio.generation.reference = nil } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.borderless).help("Remove reference")
                 }
+                Toggle("Use Reference Resolution", isOn: Binding(
+                    get: { studio.generation.preserveReferenceSize == true },
+                    set: { studio.generation.preserveReferenceSize = $0 }
+                ))
                 ValueSlider(label: "Denoise strength", value: $studio.generation.strength, range: 0.01...1)
             } else {
                 Button("Choose Image…") {
@@ -53,26 +66,44 @@ struct GenerationControls: View {
             setReference(first)
             return true
         }
+        .task(id: studio.generation.reference) {
+            guard let url = studio.generation.reference else {
+                referenceDimensions = nil
+                return
+            }
+            let dimensions = await Task.detached(priority: .utility) { try? ImageFiles.dimensions(of: url) }.value
+            if !Task.isCancelled {
+                referenceDimensions = dimensions.map { (url, ModelImageSize(width: $0.0, height: $0.1)) }
+            }
+        }
         ControlSection(title: "Output size") {
-            Picker("Aspect ratio", selection: Binding(get: {
-                presets.firstIndex { $0.0 == studio.generation.width && $0.1 == studio.generation.height } ?? -1
-            }, set: { index in
-                if presets.indices.contains(index) {
-                    studio.generation.width = presets[index].0
-                    studio.generation.height = presets[index].1
+            if usesReferenceResolution {
+                if let size = outputDimensions {
+                    Text("\(size.width) × \(size.height) px").monospacedDigit().foregroundStyle(.secondary)
+                } else {
+                    Text("Reference dimensions unavailable").foregroundStyle(.secondary)
                 }
-            })) {
-                if !presets.contains(where: { $0.0 == studio.generation.width && $0.1 == studio.generation.height }) {
-                    Text("Custom").tag(-1)
+            } else {
+                Picker("Aspect ratio", selection: Binding(get: {
+                    presets.firstIndex { $0.0 == studio.generation.width && $0.1 == studio.generation.height } ?? -1
+                }, set: { index in
+                    if presets.indices.contains(index) {
+                        studio.generation.width = presets[index].0
+                        studio.generation.height = presets[index].1
+                    }
+                })) {
+                    if !presets.contains(where: { $0.0 == studio.generation.width && $0.1 == studio.generation.height }) {
+                        Text("Custom").tag(-1)
+                    }
+                    ForEach(presets.indices, id: \.self) { idx in
+                        Text("\(presets[idx].2) · \(presets[idx].0) × \(presets[idx].1)").tag(idx)
+                    }
+                }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
+                HStack {
+                    NumberInput("Width", value: $studio.generation.width)
+                    Text("×").foregroundStyle(.secondary)
+                    NumberInput("Height", value: $studio.generation.height)
                 }
-                ForEach(presets.indices, id: \.self) { idx in
-                    Text("\(presets[idx].2) · \(presets[idx].0) × \(presets[idx].1)").tag(idx)
-                }
-            }.labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
-            HStack {
-                NumberInput("Width", value: $studio.generation.width)
-                Text("×").foregroundStyle(.secondary)
-                NumberInput("Height", value: $studio.generation.height)
             }
             Stepper("Images: \(studio.generation.count)", value: $studio.generation.count, in: 1...100)
         }
@@ -80,7 +111,9 @@ struct GenerationControls: View {
         if studio.generation.autoEnhance {
             ModelPicker(title: "Enhancement model", kind: .enhancement, id: $studio.activeEnhancementID)
             OutputScaleControl()
-            TargetSizeLine(width: studio.generation.width, height: studio.generation.height, options: studio.enhancement)
+            if let size = outputDimensions {
+                TargetSizeLine(width: size.width, height: size.height, options: studio.enhancement)
+            }
         }
         Divider()
         DisclosureGroup("Advanced", isExpanded: $advanced) {
@@ -136,13 +169,12 @@ struct GenerationControls: View {
                             Button(model.name) { studio.generation.loras.append(.init(modelID: model.id)) }
                         }
                         Divider()
-                        Button("Manage Adapters…") { showLoRAManager = true }
+                        OpenModelManager(kind: .lora) { Text("Manage Adapters…") }
                     }.fixedSize()
                 }
             }
             .padding(.top, 8)
         }
-        .sheet(isPresented: $showLoRAManager) { ModelsSheet(initialKind: .lora) }
     }
 
     private func setReference(_ url: URL) {
@@ -301,7 +333,7 @@ private struct OutputScaleControl: View {
             })) {
                 Text("1×").tag(1); Text("2×").tag(2); Text("3×").tag(3); Text("4×").tag(4); Text("Custom").tag(0)
             }
-            .pickerStyle(.segmented).labelsHidden()
+            .pickerStyle(.segmented).labelsHidden().controlSize(.small)
             if studio.enhancement.customLongEdge != nil {
                 NumberInput("Long edge (px)", value: Binding(get: { studio.enhancement.customLongEdge ?? 2048 },
                     set: { studio.enhancement.customLongEdge = $0 }))

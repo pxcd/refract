@@ -97,18 +97,26 @@ final class StudioStore: ObservableObject {
 
     func generate() {
         do {
-            let opts = generation
+            var opts = generation
             guard !opts.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw StudioError("Enter a prompt.") }
-            guard opts.width >= 64, opts.height >= 64, opts.width.isMultiple(of: 8), opts.height.isMultiple(of: 8),
-                  (1...100).contains(opts.count), opts.steps > 0, (0...1).contains(opts.strength), opts.guidance.isFinite,
+            let reference = try opts.reference.map(InputImage.init)
+            if let reference, opts.preserveReferenceSize == true {
+                (opts.width, opts.height) = try ImageFiles.dimensions(of: reference.url)
+                try reference.validate()
+            } else {
+                opts.preserveReferenceSize = nil
+                guard opts.width >= 64, opts.height >= 64, opts.width.isMultiple(of: 8), opts.height.isMultiple(of: 8) else {
+                    throw StudioError("Enter image dimensions of at least 64 pixels on each side, in multiples of eight.")
+                }
+            }
+            guard (1...100).contains(opts.count), opts.steps > 0, (0...1).contains(opts.strength), opts.guidance.isFinite,
                   opts.seed.map({ (0...Int(UInt32.max)).contains($0) }) ?? true else {
-                throw StudioError("Check image dimensions (multiples of eight), image count (1–100), steps, and seed.")
+                throw StudioError("Check the image count (1–100), steps, guidance, reference strength, and seed.")
             }
             let generator = try selected(activeGenerationID, .generation)
             let enhancer = opts.autoEnhance ? try selected(activeEnhancementID, .enhancement) : nil
             let adapters = try opts.loras.map { try selected($0.modelID, .lora) }
             let seeds = (0..<opts.count).map { i in opts.seed.map { ($0 + i) % (Int(UInt32.max) + 1) } ?? Int.random(in: 0...Int(UInt32.max)) }
-            let reference = try opts.reference.map(InputImage.init)
             enqueue(JobRecipe(generator: generator, enhancer: enhancer, loras: adapters, generation: opts, enhancement: enhancement,
                               reference: reference, inputs: [], seeds: seeds, directory: outputDirectory, format: exportFormat, jpegQuality: jpegQuality),
                     title: opts.count == 1 ? "Generate image" : "Generate \(opts.count) images")
@@ -198,6 +206,69 @@ final class StudioStore: ObservableObject {
 
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
 
+    func clearFilmstrip(generated: Bool) {
+        for index in jobs.indices where (jobs[index].recipe.generator != nil) == generated && !jobs[index].results.isEmpty {
+            jobs[index].hiddenFilmstripResults = Set(jobs[index].results.map(\.id))
+        }
+        if let selectedResult, jobs.contains(where: { $0.hiddenFilmstripResults?.contains(selectedResult.id) == true }) {
+            self.selectedResult = nil
+        }
+        persist()
+    }
+
+    func canTrashGeneratedResult(_ job: StudioJob) -> Bool {
+        job.recipe.generator != nil && runningID != job.id && job.status != .pending && job.status != .running
+    }
+
+    func trashGeneratedResult(_ id: UUID, using trash: (URL) throws -> Void = { url in
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+    }) throws {
+        guard let index = jobs.firstIndex(where: { $0.results.contains(where: { $0.id == id }) }),
+              canTrashGeneratedResult(jobs[index]),
+              let result = jobs[index].results.first(where: { $0.id == id }) else {
+            throw StudioError("Wait for this generation job to finish before moving its output to the Trash.")
+        }
+        if let queueReadError { throw StudioError(queueReadError) }
+        let directory = jobs[index].recipe.directory.standardizedFileURL
+        let output = [result.original, result.enhanced].compactMap { $0 }
+        guard output.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL.path == directory.path }) else {
+            throw StudioError("The generated files are outside their original output folder.")
+        }
+        let fm = FileManager.default
+        let files = output.flatMap { [$0, $0.appendingPathExtension("json")] }.filter { fm.fileExists(atPath: $0.path) }
+        if !files.isEmpty {
+            let name = "Refract " + result.original.deletingPathExtension().lastPathComponent
+            let group = directory.appendingPathComponent(name, isDirectory: true)
+            let staging = fm.fileExists(atPath: group.path)
+                ? directory.appendingPathComponent(name + " " + UUID().uuidString, isDirectory: true) : group
+            try fm.createDirectory(at: staging, withIntermediateDirectories: false)
+            // Move the complete set to the Trash as one item. Roll back any partial staging.
+            var moves: [(original: URL, staged: URL)] = []
+            do {
+                for file in files {
+                    let staged = staging.appendingPathComponent(file.lastPathComponent)
+                    try fm.moveItem(at: file, to: staged)
+                    moves.append((file, staged))
+                }
+                try trash(staging)
+            } catch {
+                for move in moves.reversed() {
+                    try fm.moveItem(at: move.staged, to: move.original)
+                }
+                try? fm.removeItem(at: staging)
+                throw error
+            }
+        }
+        jobs[index].trashedResultIndices = (jobs[index].trashedResultIndices ?? []).union([result.index])
+        jobs[index].hiddenFilmstripResults?.remove(id)
+        jobs[index].results.removeAll { $0.id == id }
+        if selectedResult?.id == id {
+            selectedResult = jobs[index].filmstripResults.last
+                ?? jobs.first(where: { $0.recipe.generator != nil && !$0.filmstripResults.isEmpty })?.filmstripResults.last
+        }
+        persist()
+    }
+
     private func schedule() {
         guard !underCriticalPressure, runningID == nil, let job = jobs.last(where: { $0.status == .pending }) else { return }
         runningID = job.id
@@ -258,6 +329,7 @@ final class StudioStore: ObservableObject {
             let generating = model.kind == .generation
             for (i, seed) in recipe.seeds.enumerated() {
                 try Task.checkCancellation()
+                if job.trashedResultIndices?.contains(i) == true { continue }
                 let existing = results[i]
                 if generating, let existing, fm.fileExists(atPath: existing.original.path) { continue }
                 if !generating, let enhanced = existing?.enhanced, fm.fileExists(atPath: enhanced.path) { continue }
@@ -274,11 +346,12 @@ final class StudioStore: ObservableObject {
                 let raw = scratch.appendingPathComponent(UUID().uuidString + ".png")
                 let (width,height) = try !generating ? ImageFiles.outputDimensions(for: input!, options: recipe.enhancement) : (recipe.generation.width,recipe.generation.height)
                 let opts = recipe.generation
-                let request = WorkerRequest(operation: generating ? "generate" : "enhance", modelID: model.id, modelPath: model.path, modelVariant: model.variant,
+                let request = InferenceRequest(operation: generating ? "generate" : "enhance", modelID: model.id, modelPath: model.path, modelVariant: model.variant,
                                             configPath: model.configPath, inputPath: input?.path, outputPath: raw.path, prompt: opts.prompt,
                                             negativePrompt: opts.negativePrompt, width: width, height: height, steps: opts.steps,
                                             guidance: opts.guidance, seed: seed, strength: opts.strength, sampler: opts.sampler, scheduler: opts.scheduler, predictionType: opts.predictionType, zeroTerminalSNR: opts.zeroTerminalSNR,
-                                            loras: zip(adapters,opts.loras).map { AdapterWeight(id:$0.0.id, path:$0.0.path, scale:$0.1.scale) }, softness: recipe.enhancement.softness)
+                                            loras: zip(adapters,opts.loras).map { AdapterWeight(id:$0.0.id, path:$0.0.path, scale:$0.1.scale) }, softness: recipe.enhancement.softness,
+                                            preserveReferenceSize: generating ? opts.preserveReferenceSize : nil)
                 let label = "\(generating ? "Generating" : "Enhancing") \(i + 1) of \(count)"
                 func progress(_ fraction: Double?, _ message: String) {
                     self.update(job.id) {
@@ -331,14 +404,16 @@ final class StudioStore: ObservableObject {
                 try? fm.removeItem(at: raw)
                 results[i] = item
                 update(job.id) { $0.results = results.values.sorted { $0.index < $1.index } }
-                selectedResult = item
+                if jobs.first(where: { $0.id == job.id })?.hiddenFilmstripResults?.contains(item.id) != true {
+                    selectedResult = item
+                }
                 persist()
             }
         }
     }
 
     /// Recover the interval between publishing an output and checkpointing the queue.
-    private func recover(_ output: URL, job: StudioJob, index: Int, request: WorkerRequest) throws -> Bool {
+    private func recover(_ output: URL, job: StudioJob, index: Int, request: InferenceRequest) throws -> Bool {
         let fm = FileManager.default
         let receiptURL = output.appendingPathExtension("json")
         let hasFile = fm.fileExists(atPath: output.path)
@@ -391,7 +466,7 @@ private struct OutputReceipt: Codable {
     let jobID: UUID
     let index: Int
     let model: StudioModel
-    var request: WorkerRequest
+    var request: InferenceRequest
     let original: URL?
     let loras: [StudioModel]
     let generatedBy: StudioModel?

@@ -33,8 +33,11 @@ final class ModelStoreTests: XCTestCase {
             } catch is ModelError { }
         }
         XCTAssertTrue(store.models.isEmpty)
-        try await store.importModel(at: source, kind: .lora)
-        let adapter = try XCTUnwrap(store.models.first)
+        let adapter = try await store.importModel(at: source)
+        XCTAssertEqual(adapter.kind, .lora)
+        XCTAssertEqual(adapter.path, source.path)
+        XCTAssertFalse(adapter.managed)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.modelDirectory.path))
         try store.remove(adapter)
         XCTAssertEqual(try Data(contentsOf: source), expected)
         XCTAssertTrue(ModelStore(directory: root).models.isEmpty)

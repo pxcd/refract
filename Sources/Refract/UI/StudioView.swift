@@ -120,8 +120,8 @@ enum Workspace { case generate, enhance }
 
 struct StudioView: View {
     @EnvironmentObject private var studio: StudioStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var fileSelection: StudioFileSelection
-    @State private var showModels = false
     @State private var showQueue = false
     @State private var showInspector = true
     private var workspace: Workspace { fileSelection.workspace }
@@ -133,6 +133,70 @@ struct StudioView: View {
     private var activeResult: StudioResult? { workspace == .generate ? generationResult : enhancementResult }
 
     var body: some View {
+        HStack(spacing: 0) {
+            canvas
+            if showInspector {
+                Divider()
+                inspectorPane
+                    .frame(width: 320)
+            }
+        }
+        .frame(minWidth: 760, minHeight: 490)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Workspace", selection: $fileSelection.workspace) {
+                    Text("Generate").tag(Workspace.generate)
+                    Text("Enhance").tag(Workspace.enhance)
+                }
+                .pickerStyle(.segmented).labelsHidden().frame(width: 190)
+            }
+            ToolbarItemGroup(placement: .primaryAction) {
+                OpenModelManager(kind: workspace == .generate ? .generation : .enhancement) {
+                    Label("Models", systemImage: "square.3.layers.3d")
+                }
+                    .help("Manage models")
+                Button { showQueue = true } label: { Label("Queue", systemImage: "list.bullet.rectangle") }
+                    .help("View job queue")
+                Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
+                    .help(showInspector ? "Hide inspector" : "Show inspector")
+                    .accessibilityValue(showInspector ? "Shown" : "Hidden")
+            }
+        }
+        .sheet(isPresented: $showQueue) {
+            QueueSheet { isGeneration, result in
+                fileSelection.workspace = isGeneration ? .generate : .enhance
+                if isGeneration { generationResult = result } else { enhancementResult = result }
+            }
+        }
+        .onAppear {
+            generationResult = studio.jobs.first(where: { $0.recipe.generator != nil && !$0.filmstripResults.isEmpty })?.filmstripResults.last
+            if inputs.isEmpty {
+                enhancementResult = studio.jobs.first(where: { $0.recipe.generator == nil && !$0.filmstripResults.isEmpty })?.filmstripResults.last
+            }
+        }
+        .onChange(of: studio.generation.reference) { _, _ in generationResult = nil }
+        .onChange(of: fileSelection.inputs) { _, _ in enhancementResult = nil }
+        .onChange(of: fileSelection.openRequest) { _, _ in
+            showQueue = false
+            showInspector = true
+            enhancementResult = nil
+            studio.selectedResult = nil
+        }
+        .onChange(of: studio.selectedResult) { _, result in
+            guard let result else {
+                if workspace == .generate { generationResult = nil } else { enhancementResult = nil }
+                return
+            }
+            if let job = studio.jobs.first(where: { job in job.results.contains(where: { $0.id == result.id }) }) {
+                if job.recipe.generator != nil { generationResult = result } else { enhancementResult = result }
+            }
+        }
+        .alert("Refract", isPresented: Binding(get: { studio.notice != nil }, set: { if !$0 { studio.notice = nil } })) {
+            Button("OK") { studio.notice = nil }
+        } message: { Text(studio.notice ?? "") }
+    }
+
+    private var canvas: some View {
         resultArea
             .overlay {
                 if targetingCanvas {
@@ -152,124 +216,88 @@ struct StudioView: View {
                 return !urls.isEmpty
             } isTargeted: { targetingCanvas = $0 }
             .frame(minWidth: 360, maxWidth: .infinity, minHeight: 490, maxHeight: .infinity)
-            .inspector(isPresented: $showInspector) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        Text(workspace == .generate ? "Generate" : "Enhance")
-                            .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                        if workspace == .generate {
-                            GenerationControls()
-                        } else {
-                            EnhancementControls(inputs: $fileSelection.inputs)
-                        }
+    }
+
+    private var inspectorPane: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(workspace == .generate ? "Generate" : "Enhance")
+                    .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+                if workspace == .generate {
+                    GenerationControls()
+                } else {
+                    EnhancementControls(inputs: $fileSelection.inputs)
+                }
+            }
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(.background.secondary)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                if workspace == .generate {
+                    generateButton
+                } else {
+                    Button {
+                        studio.enhance(inputs)
+                    } label: {
+                        Label(inputs.count > 1 ? "Enhance \(inputs.count) items" : "Enhance", systemImage: "wand.and.stars")
+                            .frame(maxWidth: .infinity)
                     }
-                    .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .background(.background.secondary)
-                .inspectorColumnWidth(min: 285, ideal: 320, max: 400)
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    VStack(spacing: 0) {
-                        Divider()
-                        if workspace == .generate {
-                            Button {
-                                studio.generate()
-                            } label: {
-                                Label("Generate", systemImage: "sparkles").frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent).controlSize(.large)
-                            .keyboardShortcut(.return, modifiers: .command)
-                            .disabled(studio.generation.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || studio.activeGenerationID.isEmpty)
-                            .padding(14)
-                        } else {
-                            Button {
-                                studio.enhance(inputs)
-                            } label: {
-                                Label(inputs.count > 1 ? "Enhance \(inputs.count) items" : "Enhance", systemImage: "wand.and.stars")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent).controlSize(.large)
-                            .keyboardShortcut(.return, modifiers: .command)
-                            .disabled(inputs.isEmpty || studio.activeEnhancementID.isEmpty)
-                            .padding(14)
-                        }
-                    }
-                    .background(.regularMaterial)
+                    .buttonStyle(.borderedProminent).controlSize(.large)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(inputs.isEmpty || studio.activeEnhancementID.isEmpty)
+                    .padding(14)
                 }
             }
-        .frame(minWidth: 760, minHeight: 490)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                Picker("Workspace", selection: $fileSelection.workspace) {
-                    Text("Generate").tag(Workspace.generate)
-                    Text("Enhance").tag(Workspace.enhance)
+            .background(.regularMaterial)
+        }
+    }
+
+    private var generateButton: some View {
+        let jobs = studio.jobs.filter { $0.recipe.generator != nil }
+        let queued = jobs.filter { $0.status == .pending }.count
+        let generating = jobs.contains { job in
+            job.status == .running && job.results.count + (job.trashedResultIndices?.count ?? 0) < job.recipe.seeds.count
+        }
+        return Button {
+            studio.generate()
+        } label: {
+            Label(queued > 0 ? "Generate · \(queued) queued" : "Generate", systemImage: "sparkles")
+                .monospacedDigit()
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .keyboardShortcut(.return, modifiers: .command)
+        .disabled(studio.generation.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || studio.activeGenerationID.isEmpty)
+        .overlay {
+            if generating {
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { tick in
+                    let period = 2.4
+                    let phase = reduceMotion ? 0 : tick.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period) / period
+                    let outline = AngularGradient(colors: [.cyan, .blue, .purple, .white, .cyan],
+                                                  center: .center, angle: .degrees(phase * 360))
+                    Capsule().strokeBorder(outline, lineWidth: 2)
+                        .shadow(color: .cyan.opacity(0.4), radius: 4)
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 190)
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button { showModels = true } label: { Label("Models", systemImage: "square.3.layers.3d") }
-                    .help("Manage models")
-                Button { showQueue = true } label: { Label("Queue", systemImage: "list.bullet.rectangle") }
-                    .help("View job queue")
-                Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
-                    .help(showInspector ? "Hide inspector" : "Show inspector")
-                    .accessibilityValue(showInspector ? "Shown" : "Hidden")
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
         }
-        .sheet(isPresented: $showModels) { ModelsSheet() }
-        .sheet(isPresented: $showQueue) {
-            QueueSheet { isGeneration, result in
-                fileSelection.workspace = isGeneration ? .generate : .enhance
-                if isGeneration { generationResult = result } else { enhancementResult = result }
-            }
-        }
-        .onAppear {
-            generationResult = studio.jobs.first(where: { $0.recipe.generator != nil && !$0.results.isEmpty })?.results.last
-            if inputs.isEmpty {
-                enhancementResult = studio.jobs.first(where: { $0.recipe.generator == nil && !$0.results.isEmpty })?.results.last
-            }
-        }
-        .onChange(of: studio.generation.reference) { _, _ in generationResult = nil }
-        .onChange(of: fileSelection.inputs) { _, _ in enhancementResult = nil }
-        .onChange(of: fileSelection.openRequest) { _, _ in
-            showQueue = false
-            showModels = false
-            showInspector = true
-            enhancementResult = nil
-            studio.selectedResult = nil
-        }
-        .onChange(of: studio.selectedResult) { _, result in
-            guard let result else {
-                if workspace == .generate { generationResult = nil } else { enhancementResult = nil }
-                return
-            }
-            if let job = studio.jobs.first(where: { job in job.results.contains(where: { $0.id == result.id }) }) {
-                if job.recipe.generator != nil { generationResult = result } else { enhancementResult = result }
-            }
-        }
-        .alert("Refract", isPresented: Binding(get: { studio.notice != nil }, set: { if !$0 { studio.notice = nil } })) {
-            Button("OK") { studio.notice = nil }
-        } message: { Text(studio.notice ?? "") }
+        .accessibilityValue(generating ? "Generating" : "")
+        .padding(14)
     }
 
     @ViewBuilder private var resultArea: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let result = activeResult {
-                HStack {
-                    Text((result.enhanced ?? result.original).lastPathComponent)
-                        .font(.headline).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                    Spacer()
-                    Menu {
-                        Button("Reveal in Finder") { studio.reveal(result.enhanced ?? result.original) }
-                        Button("Save As…") { StudioPanels.save(result.enhanced ?? result.original, studio: studio) }
-                        if result.enhanced != nil {
-                            Divider()
-                            Button("Reveal Original in Finder") { studio.reveal(result.original) }
-                            Button("Save Original As…") { StudioPanels.save(result.original, studio: studio) }
-                        }
-                    } label: { Label("File", systemImage: "square.and.arrow.up") }
-                    .fixedSize()
-                }
-                .padding(.horizontal, 14).frame(height: 42)
+                Text((result.enhanced ?? result.original).lastPathComponent)
+                    .font(.headline).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: 42)
                 Divider()
                 ImageViewport(original: result.original, enhanced: result.enhanced)
                     .frame(maxHeight: .infinity)
@@ -299,29 +327,71 @@ struct StudioView: View {
                 }
                 .buttonStyle(.plain)
             }
-            let recent = studio.jobs.filter { ($0.recipe.generator != nil) == (workspace == .generate) }.flatMap(\.results)
+            let recent = studio.jobs.filter { ($0.recipe.generator != nil) == (workspace == .generate) && !$0.filmstripResults.isEmpty }
             if !recent.isEmpty {
                 Divider()
-                ScrollView(.horizontal) {
-                    LazyHStack(spacing: 6) {
-                        ForEach(recent, id: \.id) { result in
-                            Button {
-                                if workspace == .generate { generationResult = result } else { enhancementResult = result }
-                                studio.selectedResult = result
-                            } label: {
-                                ImageThumb(url: result.enhanced ?? result.original)
-                                    .frame(width: 54, height: 54).clipShape(RoundedRectangle(cornerRadius: 6))
-                                    .overlay {
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .stroke(activeResult?.id == result.id ? Color.accentColor : .clear, lineWidth: 3)
-                                    }
+                HStack(spacing: 0) {
+                    ScrollView(.horizontal) {
+                        LazyHStack(spacing: 6) {
+                            ForEach(recent) { job in
+                                ForEach(job.filmstripResults) { result in
+                                    thumbnail(result, job: job)
+                                }
                             }
-                            .buttonStyle(.plain).help((result.enhanced ?? result.original).lastPathComponent)
-                            .accessibilityLabel((result.enhanced ?? result.original).lastPathComponent)
-                        }
-                    }.padding(.horizontal, 10).padding(.vertical, 8)
+                        }.padding(.horizontal, 10).padding(.vertical, 8)
+                    }
+                    Button("Clear") {
+                        let generated = workspace == .generate
+                        if generated { generationResult = nil } else { enhancementResult = nil }
+                        studio.clearFilmstrip(generated: generated)
+                    }
+                    .controlSize(.small)
+                    .padding(.horizontal, 12)
+                    .accessibilityLabel("Clear filmstrip")
+                    .help("Clear thumbnails and keep their files and job history")
                 }
                 .frame(height: 70)
+            }
+        }
+    }
+
+    private func thumbnail(_ result: StudioResult, job: StudioJob) -> some View {
+        let displayed = result.enhanced ?? result.original
+        return Button {
+            if workspace == .generate { generationResult = result } else { enhancementResult = result }
+            studio.selectedResult = result
+        } label: {
+            ImageThumb(url: displayed)
+                .frame(width: 54, height: 54)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(activeResult?.id == result.id ? Color.accentColor : .clear, lineWidth: 3)
+                }
+        }
+        .buttonStyle(.plain)
+        .help(displayed.lastPathComponent)
+        .accessibilityLabel(displayed.lastPathComponent)
+        .contextMenu {
+            Button("Show in Finder", systemImage: "folder") { studio.reveal(displayed) }
+            Button("Save As…", systemImage: "square.and.arrow.up") { StudioPanels.save(displayed, studio: studio) }
+            if result.enhanced != nil {
+                Divider()
+                Button("Show Original in Finder") { studio.reveal(result.original) }
+                Button("Save Original As…") { StudioPanels.save(result.original, studio: studio) }
+            }
+            if job.recipe.generator != nil {
+                Divider()
+                Button("Move to Trash", systemImage: "trash", role: .destructive) {
+                    do {
+                        try studio.trashGeneratedResult(result.id)
+                        if generationResult?.id == result.id {
+                            generationResult = studio.jobs.first(where: { $0.id == job.id })?.filmstripResults.last
+                                ?? studio.jobs.first(where: { $0.recipe.generator != nil && !$0.filmstripResults.isEmpty })?.filmstripResults.last
+                        }
+                    } catch { studio.notice = error.localizedDescription }
+                }
+                .disabled(!studio.canTrashGeneratedResult(job))
             }
         }
     }
@@ -364,7 +434,6 @@ struct ModelPicker: View {
     let title: String
     let kind: ModelKind
     @Binding var id: String
-    @State private var showingModels = false
 
     var body: some View {
         let choices = models.models.filter { $0.kind == kind }
@@ -375,10 +444,9 @@ struct ModelPicker: View {
                     if !choices.contains(where: { $0.id == id }) { Text("Choose a model").tag(id) }
                     ForEach(choices, id: \.id) { Text($0.name).tag($0.id) }
                 }.labelsHidden().frame(maxWidth: .infinity)
-                Button { showingModels = true } label: { Image(systemName: "ellipsis.circle") }
+                OpenModelManager(kind: kind) { Image(systemName: "ellipsis.circle") }
                     .accessibilityLabel("Manage models").help("Manage models")
             }
         }
-        .sheet(isPresented: $showingModels) { ModelsSheet(initialKind: kind) }
     }
 }

@@ -23,6 +23,13 @@ final class OfflineBatchTests: XCTestCase {
         store.generation.seed = 314159
         store.generation.prompt = "Editorial photograph of a red enamel coffee pot with a wooden handle on an old walnut table by a rain-streaked window, soft morning side light, realistic material texture."
         store.generation.autoEnhance = true
+        var expectedSize = (832, 1216)
+        if let source = env["REFRACT_QA_REFERENCE"] {
+            let url = URL(fileURLWithPath: source)
+            store.generation.reference = url
+            store.generation.preserveReferenceSize = true
+            expectedSize = try ImageFiles.dimensions(of: url)
+        }
         store.generate()
         store.generation.count = 1
         store.generation.prompt = "New draft"
@@ -52,8 +59,8 @@ final class OfflineBatchTests: XCTestCase {
             let after = try XCTUnwrap(pair.enhanced)
             let originalSize = try ImageFiles.dimensions(of:pair.original)
             let afterSize = try ImageFiles.dimensions(of:after)
-            XCTAssertEqual(originalSize.0,832); XCTAssertEqual(originalSize.1,1216)
-            XCTAssertEqual(afterSize.0,1664); XCTAssertEqual(afterSize.1,2432)
+            XCTAssertEqual(originalSize.0, expectedSize.0); XCTAssertEqual(originalSize.1, expectedSize.1)
+            XCTAssertEqual(afterSize.0, expectedSize.0 * 2); XCTAssertEqual(afterSize.1, expectedSize.1 * 2)
             XCTAssertTrue(FileManager.default.fileExists(atPath:after.appendingPathExtension("json").path))
         }
         if interrupt {

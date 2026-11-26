@@ -27,6 +27,7 @@ struct GenerationOptions: Codable, Hashable {
     var zeroTerminalSNR: Bool?
     var strength = 0.65
     var reference: URL?
+    var preserveReferenceSize: Bool?
     var loras: [LoRAChoice] = []
     var autoEnhance = false
 }
@@ -120,6 +121,12 @@ struct StudioJob: Codable, Identifiable {
     var progress: Double? = 0
     var elapsed: TimeInterval = 0
     var results: [StudioResult] = []
+    var trashedResultIndices: Set<Int>?
+    var hiddenFilmstripResults: Set<UUID>?
+
+    var filmstripResults: [StudioResult] {
+        results.filter { hiddenFilmstripResults?.contains($0.id) != true }
+    }
 }
 
 struct StudioError: LocalizedError {
@@ -127,7 +134,7 @@ struct StudioError: LocalizedError {
     init(_ message: String) { errorDescription = message }
 }
 
-struct WorkerRequest: Codable {
+struct InferenceRequest: Codable {
     var id = UUID().uuidString
     var operation: String
     var modelID: String?
@@ -150,6 +157,7 @@ struct WorkerRequest: Codable {
     var zeroTerminalSNR: Bool?
     var loras: [AdapterWeight]
     var softness: Double
+    var preserveReferenceSize: Bool? = nil
 }
 
 struct AdapterWeight: Codable {
@@ -162,7 +170,7 @@ struct AdapterWeight: Codable {
     var runtimeIdentity: String { get }
     var measuredPeakBytes: UInt64? { get }
     var processingSize: ModelImageSize? { get }
-    func render(_ request: WorkerRequest, progress: @escaping (Double?, String) -> Void) async throws
+    func render(_ request: InferenceRequest, progress: @escaping (Double?, String) -> Void) async throws
     func stop()
 }
 

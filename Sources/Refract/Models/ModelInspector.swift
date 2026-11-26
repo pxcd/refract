@@ -46,8 +46,10 @@ actor ModelInspector {
         }
     }
 
-    func inspect(at url: URL, kind: ModelKind, managed: Bool = false) throws -> StudioModel {
-        if kind == .enhancement { return try inspectPackage(at: url, managed: managed) }
+    func inspect(at url: URL, kind requestedKind: ModelKind?, managed: Bool = false) throws -> StudioModel {
+        if requestedKind == .enhancement || (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+            return try inspectPackage(at: url, kind: requestedKind, managed: managed)
+        }
         guard url.pathExtension.lowercased() == "safetensors" else {
             throw ModelError("Choose a single .safetensors file for an SDXL checkpoint or LoRA.")
         }
@@ -86,6 +88,7 @@ actor ModelInspector {
             end = next
         }
         guard !tensors.isEmpty, tensors.count == contents.count, end == payload else { throw ModelError("Incomplete safetensors payload.") }
+        let kind = requestedKind ?? (tensors["model.diffusion_model.input_blocks.0.0.weight"] == nil ? .lora : .generation)
         if kind == .generation {
             let input = tensors["model.diffusion_model.input_blocks.0.0.weight"]?["shape"] as? [Int]
             let embedding = tensors["model.diffusion_model.label_emb.0.0.weight"]?["shape"] as? [Int]
@@ -124,21 +127,28 @@ actor ModelInspector {
     func installedModel(in directory: URL, entry: CatalogModel) throws -> StudioModel {
         if let checkpoint = entry.checkpointFile {
             for file in entry.files { try check(file, at: directory.appendingPathComponent(file.path)) }
-            let candidate = try inspect(at: directory.appendingPathComponent(checkpoint.path), kind: .generation, managed: true)
+            let candidate = try inspect(at: directory.appendingPathComponent(checkpoint.path), kind: entry.kind, managed: true)
             guard candidate.id == entry.identity else { throw ModelError("The installed checkpoint's local configuration differs from the catalog.") }
             return candidate
         }
-        guard entry.kind == .enhancement else { throw ModelError("This catalog entry has no downloadable checkpoint.") }
-        let candidate = try inspectPackage(at: directory, managed: true)
-        guard candidate.id == entry.identity else { throw ModelError("The model package differs from its catalog revision.") }
-        return candidate
+        return try packageModel(at: directory, entry: entry, managed: true)
     }
 
-    private func inspectPackage(at url: URL, managed: Bool) throws -> StudioModel {
-        guard let entry = RefractCatalog.entries.first(where: { entry in
-            guard entry.kind == .enhancement && entry.canDownload else { return false }
+    private func inspectPackage(at url: URL, kind: ModelKind?, managed: Bool) throws -> StudioModel {
+        let candidates = RefractCatalog.entries.filter { entry in
+            guard (kind == nil || kind == entry.kind), entry.canDownload, entry.checkpointFile == nil else { return false }
             return entry.files.allSatisfy { file in (try? Stamp(url.appendingPathComponent(file.path).path).size) == file.size }
-        }) else { throw ModelError("Choose a complete, supported MLX-Gen SeedVR2 Q8 package directory. Its transformer and VAE shards must match the catalog. Other layouts require a compatible loader.") }
+        }
+        var validationError: Error?
+        for entry in candidates {
+            do { return try packageModel(at: url, entry: entry, managed: managed) }
+            catch { if validationError == nil { validationError = error } }
+        }
+        throw validationError ?? ModelError("Choose a complete model package that matches a downloadable catalog revision.")
+    }
+
+    private func packageModel(at url: URL, entry: CatalogModel, managed: Bool) throws -> StudioModel {
+        guard entry.canDownload, entry.checkpointFile == nil else { throw ModelError("This catalog entry has no downloadable model package.") }
         for file in entry.files { try check(file, at: url.appendingPathComponent(file.path)) }
         // The MLX loader globs shards and may consume additional weights in the two component folders.
         let componentDirectories = Set(entry.files.map { ($0.path as NSString).deletingLastPathComponent })
@@ -149,7 +159,7 @@ actor ModelInspector {
                 throw ModelError("The \(directory) folder contains shards outside the selected model revision.")
             }
         }
-        return StudioModel(id: entry.identity, name: entry.name, kind: .enhancement, path: url.path, variant: entry.variant,
+        return StudioModel(id: entry.identity, name: entry.name, kind: entry.kind, path: url.path, variant: entry.variant,
                            configPath: nil, precision: entry.precision, license: entry.license, bytes: entry.bytes, managed: managed)
     }
 
