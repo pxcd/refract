@@ -15,13 +15,14 @@ private func writeImage(_ destination: URL, width: Int, height: Int) throws {
 @MainActor private final class TestClient: InferenceClient {
     var requests: [InferenceRequest] = []
     var failAt: Int?
+    var reportedFraction: Double? = 0.7
     var onRender: ((InferenceRequest) throws -> Void)?
     func render(_ request: InferenceRequest, progress: @escaping (Double?, String) -> Void) async throws {
         requests.append(request)
         try onRender?(request)
         if failAt == requests.count { throw StudioError("Intentional test interruption") }
         try await Task.sleep(nanoseconds: 10_000_000)
-        progress(0.7, "Rendering")
+        progress(reportedFraction, "Rendering")
         try writeImage(URL(fileURLWithPath: request.outputPath), width: request.width, height: request.height)
     }
     func stop() {}
@@ -303,6 +304,27 @@ final class StudioTests: XCTestCase {
         store.generate()
         try await wait(store)
         XCTAssertEqual(store.jobs.first?.status, .completed)
+    }
+
+    @MainActor func testBatchProgressAdvancesWithoutNumericWorkerUpdates() async throws {
+        let root = try temporary(), models = ModelStore(directory: root), client = TestClient()
+        try await models.importModel(at: checkpoint(root))
+        let store = StudioStore(models: models, worker: client, directory: root, defaults: isolatedDefaults())
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.generation.prompt = "Progress without step fractions"
+        store.generation.width = 64
+        store.generation.height = 64
+        store.generation.count = 2
+        client.reportedFraction = nil
+        var observed: [Double?] = []
+        client.onRender = { _ in
+            observed.append(store.jobs.first?.progress)
+        }
+        defer { client.onRender = nil }
+        store.generate()
+        try await wait(store)
+        XCTAssertEqual(observed, [nil, 0.5])
+        XCTAssertEqual(store.jobs.first?.progress, 1)
     }
 
     func testImageGeometryAndExports() throws {
