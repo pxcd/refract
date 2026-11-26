@@ -1,0 +1,8 @@
+.DS_Store
+.build/
+.swiftpm/
+.runtime/
+build/
+__pycache__/
+*.pyc
+.runtime-build/

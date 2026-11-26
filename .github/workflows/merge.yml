@@ -1,0 +1,52 @@
+name: Merge passing changes
+
+on:
+  workflow_run:
+    workflows: [Refract]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  merge:
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Merge eligible pull request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The privileged workflow uses only GitHub metadata and executes no PR code.
+          number="$(jq -r '.workflow_run.pull_requests[0].number // empty' "$GITHUB_EVENT_PATH")"
+          tested="$(jq -r '.workflow_run.head_sha' "$GITHUB_EVENT_PATH")"
+          if [[ -z "$number" ]]; then exit 0; fi
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")"
+          if ! jq -e --arg repo "$GITHUB_REPOSITORY" --arg sha "$tested" '
+            .state == "open" and (.draft | not) and .base.ref == "main" and
+            .head.repo.full_name == $repo and .head.sha == $sha and
+            (.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+          ' <<< "$pr" > /dev/null; then
+            exit 0
+          fi
+          files="$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$number/files?per_page=100")"
+          count="$(jq -r '.changed_files' <<< "$pr")"
+          if ! jq -e --argjson count "$count" '
+            def eligible:
+              test("^(Sources/Refract/(Core|Models)/|Worker/|Tests/|scripts/)")
+              or . == "README.md" or . == ".gitignore" or . == "Package.swift";
+            add | length == $count and length > 0 and
+              all(.[]; (.filename | eligible) and ((.previous_filename // .filename) | eligible))
+          ' <<< "$files" > /dev/null; then
+            echo "Leaving PR #$number open for manual review."
+            exit 0
+          fi
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/pulls/$number/merge" \
+            -f sha="$tested" -f merge_method=squash --jq '.sha'
+          # The Actions token's merge does not trigger a push workflow.
+          gh workflow run refract.yml --repo "$GITHUB_REPOSITORY" --ref main
