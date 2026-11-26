@@ -67,6 +67,7 @@ private extension ExportFormat {
         orientation = .horizontal
         alignment = .centerY
         spacing = 8
+        edgeInsets = NSEdgeInsets(top: 12, left: 20, bottom: 12, right: 20)
         let picker = NSPopUpButton()
         for format in ExportFormat.allCases {
             picker.addItem(withTitle: format.rawValue.uppercased())
@@ -76,8 +77,14 @@ private extension ExportFormat {
         picker.target = self
         picker.action = #selector(selectFormat(_:))
         picker.setAccessibilityLabel("File format")
-        addArrangedSubview(NSTextField(labelWithString: "Format"))
+        let label = NSTextField(labelWithString: "Format:")
+        label.alignment = .right
+        label.textColor = .secondaryLabelColor
+        addArrangedSubview(label)
+        label.widthAnchor.constraint(equalToConstant: 72).isActive = true
         addArrangedSubview(picker)
+        picker.setContentHuggingPriority(.required, for: .horizontal)
+        addArrangedSubview(NSView())
         setFrameSize(fittingSize)
     }
 
@@ -136,12 +143,19 @@ struct StudioView: View {
         HStack(spacing: 0) {
             canvas
             if showInspector {
-                Divider()
+                Rectangle()
+                    .fill(.quaternary)
+                    .frame(width: 1)
+                    .padding(.vertical, 12)
+                    .accessibilityHidden(true)
                 inspectorPane
                     .frame(width: 320)
             }
         }
         .frame(minWidth: 760, minHeight: 490)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .toolbarBackground(Color(nsColor: .windowBackgroundColor), for: .windowToolbar)
+        .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Picker("Workspace", selection: $fileSelection.workspace) {
@@ -219,19 +233,15 @@ struct StudioView: View {
     }
 
     private var inspectorPane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                Text(workspace == .generate ? "Generate" : "Enhance")
-                    .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                if workspace == .generate {
-                    GenerationControls()
-                } else {
-                    EnhancementControls(inputs: $fileSelection.inputs)
-                }
+        Form {
+            if workspace == .generate {
+                GenerationControls()
+            } else {
+                EnhancementControls(inputs: $fileSelection.inputs)
             }
-            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(.background.secondary)
+        .formStyle(.grouped)
+        .controlSize(.small)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 Divider()
@@ -293,12 +303,6 @@ struct StudioView: View {
     @ViewBuilder private var resultArea: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let result = activeResult {
-                Text((result.enhanced ?? result.original).lastPathComponent)
-                    .font(.headline).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: 42)
-                Divider()
                 ImageViewport(original: result.original, enhanced: result.enhanced)
                     .frame(maxHeight: .infinity)
             } else if workspace == .enhance, let first = inputs.first, isImage(first) {
@@ -318,6 +322,12 @@ struct StudioView: View {
                         if let progress = running.progress {
                             ProgressView(value: progress).progressViewStyle(.linear).frame(width: 58)
                         } else { ProgressView().controlSize(.small) }
+                        if let position = studio.generationBatchPosition(for: running) {
+                            Text("Batch \(position.current) of \(position.total)")
+                                .fontWeight(.medium).monospacedDigit()
+                                .fixedSize()
+                            Text("·").foregroundStyle(.secondary)
+                        }
                         Text(running.message.isEmpty ? running.title : running.message).lineLimit(1)
                         Spacer()
                         Text("Queue").foregroundStyle(.secondary)
@@ -438,13 +448,14 @@ struct ModelPicker: View {
     var body: some View {
         let choices = models.models.filter { $0.kind == kind }
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline)
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             HStack {
                 Picker(title, selection: $id) {
                     if !choices.contains(where: { $0.id == id }) { Text("Choose a model").tag(id) }
                     ForEach(choices, id: \.id) { Text($0.name).tag($0.id) }
                 }.labelsHidden().frame(maxWidth: .infinity)
-                OpenModelManager(kind: kind) { Image(systemName: "ellipsis.circle") }
+                OpenModelManager(kind: kind) { Image(systemName: "square.3.layers.3d") }
+                    .buttonStyle(.borderless)
                     .accessibilityLabel("Manage models").help("Manage models")
             }
         }

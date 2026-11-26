@@ -7,7 +7,7 @@ private struct ControlSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -33,15 +33,27 @@ struct GenerationControls: View {
                            (1216, 832, "Landscape"), (768, 1344, "Tall"), (1344, 768, "Wide")]
 
     var body: some View {
-        ModelPicker(title: "Checkpoint", kind: .generation, id: $studio.activeGenerationID)
-        ControlSection(title: "Prompt") {
-            TextEditor(text: $studio.generation.prompt)
-                .font(.body).scrollContentBackground(.hidden).padding(5)
-                .frame(minHeight: 90).background(.background, in: RoundedRectangle(cornerRadius: 7))
-                .overlay { RoundedRectangle(cornerRadius: 7).stroke(.quaternary) }
-                .accessibilityLabel("Positive prompt")
+        Section {
+            ModelPicker(title: "Checkpoint", kind: .generation, id: $studio.activeGenerationID)
         }
-        ControlSection(title: "Reference image") {
+        Section("Prompt") {
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: $studio.generation.prompt)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .frame(height: 102)
+                    .accessibilityLabel("Positive prompt")
+                if studio.generation.prompt.isEmpty {
+                    Text("Describe the image you want to make")
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 5)
+                        .padding(.top, 1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+        }
+        Section("Reference image") {
             if let reference = studio.generation.reference {
                 HStack {
                     ImageThumb(url: reference).frame(width: 34, height: 34).clipShape(RoundedRectangle(cornerRadius: 4))
@@ -54,11 +66,16 @@ struct GenerationControls: View {
                     get: { studio.generation.preserveReferenceSize == true },
                     set: { studio.generation.preserveReferenceSize = $0 }
                 ))
+                .toggleStyle(.switch)
                 ValueSlider(label: "Denoise strength", value: $studio.generation.strength, range: 0.01...1)
             } else {
-                Button("Choose Image…") {
+                Button {
                     if let url = StudioPanels.choose("Choose reference image", types: [.image]).first { setReference(url) }
-                }.accessibilityHint("Switches to image-to-image generation")
+                } label: {
+                    Label("Add Image…", systemImage: "photo.badge.plus")
+                }
+                .buttonStyle(.link)
+                .accessibilityHint("Switches to image-to-image generation")
             }
         }
         .dropDestination(for: URL.self) { urls, _ in
@@ -76,7 +93,7 @@ struct GenerationControls: View {
                 referenceDimensions = dimensions.map { (url, ModelImageSize(width: $0.0, height: $0.1)) }
             }
         }
-        ControlSection(title: "Output size") {
+        Section("Output") {
             if usesReferenceResolution {
                 if let size = outputDimensions {
                     Text("\(size.width) × \(size.height) px").monospacedDigit().foregroundStyle(.secondary)
@@ -105,17 +122,27 @@ struct GenerationControls: View {
                     NumberInput("Height", value: $studio.generation.height)
                 }
             }
-            Stepper("Images: \(studio.generation.count)", value: $studio.generation.count, in: 1...100)
-        }
-        Toggle("Enhance after generation", isOn: $studio.generation.autoEnhance)
-        if studio.generation.autoEnhance {
-            ModelPicker(title: "Enhancement model", kind: .enhancement, id: $studio.activeEnhancementID)
-            OutputScaleControl()
-            if let size = outputDimensions {
-                TargetSizeLine(width: size.width, height: size.height, options: studio.enhancement)
+            Stepper(value: $studio.generation.count, in: 1...100) {
+                LabeledContent("Images") { Text(studio.generation.count, format: .number).monospacedDigit() }
             }
         }
-        Divider()
+        Section {
+            Toggle("Enhance after generation", isOn: $studio.generation.autoEnhance)
+                .toggleStyle(.switch)
+            if studio.generation.autoEnhance {
+                ModelPicker(title: "Enhancement model", kind: .enhancement, id: $studio.activeEnhancementID)
+                OutputScaleControl()
+                if let size = outputDimensions {
+                    TargetSizeLine(width: size.width, height: size.height, options: studio.enhancement)
+                }
+            }
+        }
+        Section {
+            advancedControls
+        }
+    }
+
+    private var advancedControls: some View {
         DisclosureGroup("Advanced", isExpanded: $advanced) {
             VStack(alignment: .leading, spacing: 14) {
                 ControlSection(title: "Negative prompt") {
@@ -186,28 +213,23 @@ struct GenerationControls: View {
 struct EnhancementControls: View {
     @EnvironmentObject private var studio: StudioStore
     @Binding var inputs: [URL]
-    @State private var advanced = false
     @State private var dropTargeted = false
 
     var body: some View {
-        ModelPicker(title: "Restoration model", kind: .enhancement, id: $studio.activeEnhancementID)
-        ControlSection(title: "Source images") {
+        Section {
+            ModelPicker(title: "Restoration model", kind: .enhancement, id: $studio.activeEnhancementID)
+        }
+        Section("Source images") {
             Button {
                 add(StudioPanels.choose("Add images or folders", directories: true, multiple: true, types: [.image]))
             } label: {
-                VStack(spacing: 7) {
-                    Image(systemName: "square.and.arrow.down").font(.title2).foregroundStyle(.secondary)
-                    Text("Add images or folders").fontWeight(.medium)
-                    Text("Drop here or browse").font(.caption).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity).padding(.vertical, 15)
-                .background(dropTargeted ? Color.accentColor.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 9))
-                .overlay { RoundedRectangle(cornerRadius: 9).strokeBorder(
-                    dropTargeted ? Color.accentColor : Color.secondary.opacity(0.45),
-                    style: StrokeStyle(lineWidth: 1, dash: [5, 4])) }
-                .contentShape(Rectangle())
+                Label("Add Images or Folders…", systemImage: "plus.circle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.link)
+            .foregroundStyle(dropTargeted ? Color.accentColor : Color.primary)
+            .help("Drop images or folders here, or click to browse")
             .dropDestination(for: URL.self) { urls, _ in add(urls); return !urls.isEmpty } isTargeted: { dropTargeted = $0 }
             ForEach(inputs, id: \.self) { input in
                 HStack {
@@ -222,9 +244,9 @@ struct EnhancementControls: View {
                 Button("Clear Selection") { inputs.removeAll() }.buttonStyle(.borderless)
             }
         }
-        OutputScaleControl()
-        if !inputs.isEmpty { BatchDimensions(inputs: inputs, options: studio.enhancement) }
-        ControlSection(title: "Save to") {
+        Section("Output") {
+            OutputScaleControl()
+            if !inputs.isEmpty { BatchDimensions(inputs: inputs, options: studio.enhancement) }
             HStack {
                 Label(studio.outputDirectory.lastPathComponent, systemImage: "folder")
                     .lineLimit(1).truncationMode(.middle).help(studio.outputDirectory.path)
@@ -237,11 +259,9 @@ struct EnhancementControls: View {
                 .accessibilityLabel("Choose enhancement output folder")
             }
         }
-        Divider()
-        DisclosureGroup("Advanced", isExpanded: $advanced) {
+        Section {
             ValueSlider(label: "Input softness", value: $studio.enhancement.softness, range: 0...1)
                 .help("Downsample the conditioning image to soften input detail before restoration.")
-                .padding(.top, 8)
         }
     }
 

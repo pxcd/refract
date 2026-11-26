@@ -56,6 +56,10 @@ final class StudioStore: ObservableObject {
                     jobs[i].status = .failed
                     jobs[i].message = "Interrupted. Retry to continue from saved outputs."
                 }
+                let group = activeGenerationGroupID ?? UUID()
+                for i in jobs.indices where jobs[i].status == .pending && jobs[i].recipe.generator != nil && jobs[i].generationGroupID == nil {
+                    jobs[i].generationGroupID = group
+                }
             }
         } catch {
             queueReadError = "Could not read " + stateURL.path + ". The existing queue is preserved. " + error.localizedDescription
@@ -148,9 +152,23 @@ final class StudioStore: ObservableObject {
 
     private func enqueue(_ recipe: JobRecipe, title: String) {
         if let queueReadError { notice = queueReadError; return }
-        jobs.insert(StudioJob(id: UUID(), title: title, recipe: recipe), at: 0)
+        var job = StudioJob(id: UUID(), title: title, recipe: recipe)
+        if recipe.generator != nil { job.generationGroupID = activeGenerationGroupID ?? UUID() }
+        jobs.insert(job, at: 0)
         persist()
         schedule()
+    }
+
+    private var activeGenerationGroupID: UUID? {
+        jobs.first { [.pending, .running].contains($0.status) && $0.generationGroupID != nil }?.generationGroupID
+    }
+
+    func generationBatchPosition(for job: StudioJob) -> (current: Int, total: Int)? {
+        guard job.status == .running, let groupID = job.generationGroupID else { return nil }
+        let group = jobs.filter { $0.generationGroupID == groupID }
+        guard group.count > 1 else { return nil }
+        let finished = group.count { $0.status != .pending && $0.status != .running }
+        return (finished + 1, group.count)
     }
 
     func cancel(_ id: UUID) {
@@ -163,6 +181,7 @@ final class StudioStore: ObservableObject {
 
     func retry(_ id: UUID) {
         guard let i = jobs.firstIndex(where: { $0.id == id }), [.failed,.cancelled].contains(jobs[i].status) else { return }
+        if jobs[i].recipe.generator != nil { jobs[i].generationGroupID = activeGenerationGroupID ?? UUID() }
         jobs[i].status = .pending
         jobs[i].message = "Queued for retry"
         persist()
@@ -352,7 +371,8 @@ final class StudioStore: ObservableObject {
                                             guidance: opts.guidance, seed: seed, strength: opts.strength, sampler: opts.sampler, scheduler: opts.scheduler, predictionType: opts.predictionType, zeroTerminalSNR: opts.zeroTerminalSNR,
                                             loras: zip(adapters,opts.loras).map { AdapterWeight(id:$0.0.id, path:$0.0.path, scale:$0.1.scale) }, softness: recipe.enhancement.softness,
                                             preserveReferenceSize: generating ? opts.preserveReferenceSize : nil)
-                let label = "\(generating ? "Generating" : "Enhancing") \(i + 1) of \(count)"
+                let action = generating ? "Generating" : "Enhancing"
+                let label = count == 1 ? action : "\(action) \(i + 1) of \(count)"
                 func progress(_ fraction: Double?, _ message: String) {
                     self.update(job.id) {
                         $0.message = message.isEmpty ? label : label + " · " + message

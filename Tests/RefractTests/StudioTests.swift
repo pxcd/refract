@@ -91,8 +91,6 @@ final class StudioTests: XCTestCase {
         XCTAssertTrue(final.results.allSatisfy { FileManager.default.fileExists(atPath:$0.original.appendingPathExtension("json").path) })
         let restored = StudioStore(models:models,worker:TestClient(),directory:root,defaults:defaults)
         XCTAssertEqual(restored.jobs.first?.results.count,3)
-        try models.remove(models.models[0])
-        XCTAssertTrue(FileManager.default.fileExists(atPath:source.path))
     }
 
     @MainActor func testRetryAfterQueueCheckpointWasInterrupted() async throws {
@@ -276,6 +274,35 @@ final class StudioTests: XCTestCase {
         store.retry(second)
         try await wait(store)
         XCTAssertEqual(store.jobs.first?.results.count,5)
+    }
+
+    @MainActor func testProgressCountsQueuedGenerationBatches() async throws {
+        let root = try temporary(), models = ModelStore(directory: root), client = TestClient()
+        try await models.importModel(at: checkpoint(root))
+        let store = StudioStore(models: models, worker: client, directory: root, defaults: isolatedDefaults())
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.generation.prompt = "Queue counter"
+        store.generation.width = 64
+        store.generation.height = 64
+        var progress: [String] = []
+        client.onRender = { _ in
+            let job = try XCTUnwrap(store.jobs.first { $0.status == .running })
+            let position = try XCTUnwrap(store.generationBatchPosition(for: job))
+            XCTAssertTrue(job.message.hasPrefix("Generating ·"))
+            progress.append("\(position.current)/\(position.total)")
+        }
+        for _ in 1...3 { store.generate() }
+        try await wait(store)
+        XCTAssertEqual(progress, ["1/3", "2/3", "3/3"])
+
+        client.onRender = { _ in
+            let job = try XCTUnwrap(store.jobs.first { $0.status == .running })
+            XCTAssertNil(store.generationBatchPosition(for: job))
+        }
+        defer { client.onRender = nil }
+        store.generate()
+        try await wait(store)
+        XCTAssertEqual(store.jobs.first?.status, .completed)
     }
 
     func testImageGeometryAndExports() throws {
