@@ -1,6 +1,6 @@
 # Refract
 
-A local image studio for Apple Silicon Macs running macOS 27 or later. Generate uses SDXL single-file checkpoints and weighted LoRAs. Enhance restores and upscales stills with SeedVR2. Both workspaces share a serial queue and an aligned before-and-after viewer.
+A local image studio for Apple Silicon Macs running macOS 27 or later. Generate supports SDXL single-file checkpoints and weighted LoRAs, plus FLUX.1 Krea Dev, Qwen Image 2512, and Z-Image Turbo on MLX. Enhance restores and upscales stills with SeedVR2. Both workspaces share a serial queue and an aligned before-and-after viewer.
 
 ## Source and personal use
 
@@ -21,7 +21,7 @@ The runtime preparation step downloads a private CPython 3.12 and the pinned Dar
 
 ## Models and output
 
-Open Models to add a local SDXL `.safetensors` checkpoint, compatible LoRAs or a supported prepared SeedVR2 package. Existing Hugging Face Juggernaut checkpoints are discovered by reference. A compatible local Diffusers configuration is used when present. The worker also includes offline SDXL configuration and tokenizer resources. Model files remain outside the app. The catalog records the source and license for each curated package.
+Open Models to add a local SDXL `.safetensors` checkpoint, compatible LoRAs or a supported prepared MLX package. Download curated packages from the Models catalog, or import a folder matching the pinned files by reference. The MLX generation models support text-to-image, and Qwen Image also accepts a negative prompt. Reference images and LoRAs are available with SDXL. Existing Hugging Face Juggernaut checkpoints are discovered by reference. A compatible local Diffusers configuration is used when present. The worker also includes offline SDXL configuration and tokenizer resources. Model files remain outside the app. The catalog records the source and license for each curated package.
 
 Run a standalone enhancement by dropping images or a folder in Enhance. Use Fit and Actual Size to compare the aligned images. Choose an output folder, PNG, JPEG or TIFF in Settings. Generated originals and enhancements receive distinct names and individual JSON settings sidecars. The application records queue state and model selections under the user's Application Support/Refract directory. A failed job can retry its unfinished images.
 
@@ -29,9 +29,9 @@ The default SDXL sampler preset targets standard Juggernaut XI. Distilled checkp
 
 ## Runtime and licenses
 
-Exports use the model’s sRGB image output. The source file stays intact. The model manager shows the last attributable worker peak and output geometry measured on this Mac once a run completes.
+Exports use the model’s sRGB image output. The source file stays intact. The Models catalog compares this Mac’s unified memory with model recommendations based on measured runs at representative output sizes.
 
-The Swift app calls Diffusers/PyTorch MPS for SDXL and MLX-Gen/MLX for SeedVR2 over a private JSON-lines subprocess. The pinned wheels include their original package notices. See the SDXL configuration license and source information under `Worker/configs`. Juggernaut weights are user-provided. ByteDance publishes the original SeedVR2 3B and 7B weights under Apache-2.0. Model-specific terms apply separately from runtime code. In the pinned OpenCV wheel, FFmpeg reports GPLv3 or later. PyAV also includes codec libraries. A public release needs a redistribution review and the appropriate notices and source provisions.
+The Swift app calls Diffusers/PyTorch MPS for SDXL and MLX-Gen/MLX for the other generation models and SeedVR2 over a private JSON-lines subprocess. The pinned wheels include their original package notices. See the SDXL configuration license and source information under `Worker/configs`. Juggernaut weights are user-provided. ByteDance publishes the original SeedVR2 3B and 7B weights under Apache-2.0. Model-specific terms apply separately from runtime code. In the pinned OpenCV wheel, FFmpeg reports GPLv3 or later. PyAV also includes codec libraries. A public release needs a redistribution review and the appropriate notices and source provisions.
 
 - [Diffusers single-file loaders](https://huggingface.co/docs/diffusers/main/api/loaders/single_file)
 - [MLX-Gen still-image restoration](https://github.com/lpalbou/mlx-gen/blob/main/docs/upscaling.md)

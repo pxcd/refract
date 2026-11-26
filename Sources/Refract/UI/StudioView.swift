@@ -140,6 +140,12 @@ struct StudioView: View {
 
     private var activeResult: StudioResult? { workspace == .generate ? generationResult : enhancementResult }
 
+    private var sourcePreview: URL? {
+        guard !hiddenSourcePreviews.contains(workspace) else { return nil }
+        if workspace == .generate { return studio.generation.reference }
+        return inputs.first.flatMap { isImage($0) ? $0 : nil }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
             canvas
@@ -221,6 +227,12 @@ struct StudioView: View {
 
     private var canvas: some View {
         resultArea
+            .frame(minWidth: 360, maxWidth: .infinity, minHeight: 490, maxHeight: .infinity)
+            .overlay {
+                if activeResult == nil && sourcePreview == nil {
+                    emptyPreview.allowsHitTesting(false)
+                }
+            }
             .overlay {
                 if targetingCanvas {
                     RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor, lineWidth: 3).padding(4)
@@ -240,7 +252,30 @@ struct StudioView: View {
                 studio.selectedResult = nil
                 return !urls.isEmpty
             } isTargeted: { targetingCanvas = $0 }
-            .frame(minWidth: 360, maxWidth: .infinity, minHeight: 490, maxHeight: .infinity)
+    }
+
+    private var emptyPreview: some View {
+        let generating = workspace == .generate
+        return VStack(spacing: 8) {
+            Image(systemName: generating ? "photo" : "rectangle.split.2x1")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 44, height: 36, alignment: .top)
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+                .padding(.bottom, 10)
+            Text(generating ? "Image Preview" : "Compare Images")
+                .font(.headline)
+            Text(generating ? "Your generated images will appear here." : "Add a photo to enhance and compare it with the original.")
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: 320)
+        .padding(.horizontal, 16)
+        .fixedSize(horizontal: false, vertical: true)
+        // Center a shared frame so the icon's top edge is independent of line wrapping.
+        .frame(height: 128, alignment: .top)
+        .accessibilityElement(children: .combine)
     }
 
     private var inspectorPane: some View {
@@ -315,15 +350,10 @@ struct StudioView: View {
             if let result = activeResult {
                 ImageViewport(original: result.original, enhanced: result.enhanced)
                     .frame(maxHeight: .infinity)
-            } else if workspace == .enhance, !hiddenSourcePreviews.contains(.enhance), let first = inputs.first, isImage(first) {
-                ImageViewport(original: first).frame(maxHeight: .infinity)
-            } else if workspace == .generate, !hiddenSourcePreviews.contains(.generate), let reference = studio.generation.reference {
-                ImageViewport(original: reference).frame(maxHeight: .infinity)
+            } else if let sourcePreview {
+                ImageViewport(original: sourcePreview).frame(maxHeight: .infinity)
             } else {
-                ContentUnavailableView(workspace == .generate ? "Image Preview" : "Compare Images",
-                    systemImage: workspace == .generate ? "photo" : "rectangle.split.2x1",
-                    description: Text(workspace == .generate ? "Your generated images will appear here." : "Add a photo to enhance and compare it with the original."))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if let running = studio.jobs.first(where: { $0.status == .running }) {
                 Button { showQueue = true } label: {

@@ -185,11 +185,6 @@ struct ModelMemorySample: Codable {
     let width: Int
     let height: Int
     let peak: UInt64
-
-    var description: String {
-        let gib = String(format: "%.1f", Double(peak) / 1_073_741_824)
-        return "On this Mac: " + gib + " GiB peak worker footprint at " + String(width) + " × " + String(height) + "."
-    }
 }
 
 struct ModelImageSize: Codable {

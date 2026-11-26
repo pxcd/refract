@@ -26,7 +26,6 @@ final class StudioStore: ObservableObject {
     @Published private(set) var jobs: [StudioJob] = []
     @Published var notice: String?
     @Published var selectedResult: StudioResult?
-    @Published private(set) var memorySamples: [String:ModelMemorySample] = [:]
 
     let models: ModelStore
     private let worker: InferenceClient
@@ -65,9 +64,6 @@ final class StudioStore: ObservableObject {
             queueReadError = "Could not read " + stateURL.path + ". The existing queue is preserved. " + error.localizedDescription
             notice = queueReadError
         }
-        if let data = defaults.data(forKey: "memoryMeasurements") {
-            memorySamples = (try? JSONDecoder().decode([String:ModelMemorySample].self, from: data)) ?? [:]
-        }
         restoreSamplingPreset()
         modelObservation = models.$models.sink { [weak self] installed in
             // The catalog publishes its new value before the property itself is set.
@@ -84,10 +80,16 @@ final class StudioStore: ObservableObject {
         schedule()
     }
 
+    var generationProfile: GenerationProfile {
+        let variant = models.models.first { $0.id == activeGenerationID }?.variant
+            ?? ModelStore.catalog.first { $0.identity == activeGenerationID }?.variant
+        return variant.flatMap(GenerationProfile.init(rawValue:)) ?? .sdxl
+    }
+
     private func restoreSamplingPreset() {
         let key = "sampling-" + activeGenerationID
         let saved = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(SamplingPreset.self, from: $0) }
-        (saved ?? SamplingPreset(GenerationOptions())).apply(to: &generation)
+        (saved ?? generationProfile.defaultSampling).apply(to: &generation)
     }
 
     private func selectDefaults(from installed: [StudioModel]) {
@@ -103,21 +105,26 @@ final class StudioStore: ObservableObject {
         do {
             var opts = generation
             guard !opts.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw StudioError("Enter a prompt.") }
+            let generator = try selected(activeGenerationID, .generation)
+            guard let profile = GenerationProfile(rawValue: generator.variant) else {
+                throw StudioError("This generation model requires a supported runtime.")
+            }
+            profile.configure(&opts)
             let reference = try opts.reference.map(InputImage.init)
             if let reference, opts.preserveReferenceSize == true {
                 (opts.width, opts.height) = try ImageFiles.dimensions(of: reference.url)
                 try reference.validate()
             } else {
                 opts.preserveReferenceSize = nil
-                guard opts.width >= 64, opts.height >= 64, opts.width.isMultiple(of: 8), opts.height.isMultiple(of: 8) else {
-                    throw StudioError("Enter image dimensions of at least 64 pixels on each side, in multiples of eight.")
+                let multiple = profile.dimensionMultiple
+                guard opts.width >= 64, opts.height >= 64, opts.width.isMultiple(of: multiple), opts.height.isMultiple(of: multiple) else {
+                    throw StudioError("Enter image dimensions of at least 64 pixels on each side, in multiples of \(multiple).")
                 }
             }
             guard (1...100).contains(opts.count), opts.steps > 0, (0...1).contains(opts.strength), opts.guidance.isFinite,
                   opts.seed.map({ (0...Int(UInt32.max)).contains($0) }) ?? true else {
                 throw StudioError("Check the image count (1–100), steps, guidance, reference strength, and seed.")
             }
-            let generator = try selected(activeGenerationID, .generation)
             let enhancer = opts.autoEnhance ? try selected(activeEnhancementID, .enhancement) : nil
             let adapters = try opts.loras.map { try selected($0.modelID, .lora) }
             let seeds = (0..<opts.count).map { i in opts.seed.map { ($0 + i) % (Int(UInt32.max) + 1) } ?? Int.random(in: 0...Int(UInt32.max)) }
@@ -176,6 +183,16 @@ final class StudioStore: ObservableObject {
         jobs[i].status = .cancelled
         jobs[i].message = "Cancelled"
         if runningID == id { runner?.cancel(); worker.stop() }
+        persist()
+    }
+
+    func removeQueuedJobs() {
+        guard jobs.contains(where: { $0.status == .pending }) else { return }
+        // The scheduler can reserve a pending job before its task starts.
+        if jobs.contains(where: { $0.id == runningID && $0.status == .pending }) {
+            runner?.cancel()
+        }
+        jobs.removeAll { $0.status == .pending }
         persist()
     }
 
@@ -411,10 +428,6 @@ final class StudioStore: ObservableObject {
                     let dimensions = try ImageFiles.dimensions(of: raw)
                     guard dimensions == (width,height) else { throw StudioError("The model returned \(dimensions.0) × \(dimensions.1), expected \(width) × \(height).") }
                     let sample = worker.measuredPeakBytes.map { ModelMemorySample(width: width, height: height, peak: $0) }
-                    if let sample {
-                        memorySamples[model.id] = sample
-                        if let data = try? JSONEncoder().encode(memorySamples) { defaults.set(data, forKey: "memoryMeasurements") }
-                    }
                     var publishedRequest = request
                     publishedRequest.outputPath = output.path
                     let receipt = OutputReceipt(jobID: job.id, index: i, model: model, request: publishedRequest, original: generating ? recipe.reference?.url : (results[i]?.original ?? input),

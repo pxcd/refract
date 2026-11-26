@@ -20,15 +20,14 @@ final class ModelStoreTests: XCTestCase {
         try data.write(to: url)
     }
 
-    func testWrongKindImportAndMoveExternalWeightsToTrash() async throws {
+    func testUnlinkKeepsOriginalAndAllowsReimport() async throws {
         let root = try temporaryDirectory()
         let source = root.appendingPathComponent("portrait.safetensors")
         try writeAdapter(to: source)
         let expected = try Data(contentsOf: source)
-        let trash = root.appendingPathComponent("isolated-trash.safetensors")
-        let store = ModelStore(directory: root, trash: { path in
-            try FileManager.default.moveItem(at: path, to: trash)
-            return trash
+        let store = ModelStore(directory: root, trash: { _ in
+            XCTFail("A linked model must never be moved to Trash")
+            return nil
         })
         for kind in [ModelKind.generation, .enhancement] {
             do {
@@ -42,42 +41,37 @@ final class ModelStoreTests: XCTestCase {
         XCTAssertEqual(adapter.path, source.path)
         XCTAssertFalse(adapter.managed)
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.modelDirectory.path))
-        let removal = store.removal(for: adapter)
-        XCTAssertFalse(removal.followsLink)
-        try store.remove(removal)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
-        XCTAssertEqual(try Data(contentsOf: trash), expected)
-        XCTAssertTrue(ModelStore(directory: root).models.isEmpty)
+        XCTAssertNil(store.removal(for: adapter))
+        let entry = try XCTUnwrap(ModelStore.catalog.first { $0.canDownload })
+        XCTAssertThrowsError(try store.remove(.init(model: adapter, target: source, entry: entry)))
+        try store.unlink(adapter)
+        XCTAssertEqual(try Data(contentsOf: source), expected)
+        let reopened = ModelStore(directory: root)
+        XCTAssertTrue(reopened.models.isEmpty)
+        let reimported = try await reopened.importModel(at: source)
+        XCTAssertEqual(reimported, adapter)
     }
 
-    func testLinkedModelTrashUsesConfirmedTargetAndRejectsRetargeting() async throws {
+    func testUnlinkLeavesRetargetedSymlinkAndBothWeightFiles() async throws {
         let root = try temporaryDirectory()
         let fm = FileManager.default
         let source = root.appendingPathComponent("original.safetensors")
         let alternate = root.appendingPathComponent("alternate.safetensors")
         let link = root.appendingPathComponent("linked.safetensors")
-        let trash = root.appendingPathComponent("isolated-trash.safetensors")
         try writeAdapter(to: source)
         try writeAdapter(to: alternate)
+        let originalBytes = try Data(contentsOf: source)
+        let alternateBytes = try Data(contentsOf: alternate)
         try fm.createSymbolicLink(at: link, withDestinationURL: source)
-        let store = ModelStore(directory: root, trash: { path in
-            try fm.moveItem(at: path, to: trash)
-            return trash
-        })
-        let imported = try await store.importModel(at: link)
-        let removal = store.removal(for: imported)
-        XCTAssertTrue(removal.followsLink)
-        XCTAssertEqual(removal.target, source.resolvingSymlinksInPath())
+        let store = ModelStore(directory: root)
+        let model = try await store.importModel(at: link)
         try fm.removeItem(at: link)
         try fm.createSymbolicLink(at: link, withDestinationURL: alternate)
-        XCTAssertThrowsError(try store.remove(removal))
-        XCTAssertTrue(fm.fileExists(atPath: alternate.path))
-        try fm.removeItem(at: link)
-        try fm.createSymbolicLink(at: link, withDestinationURL: source)
-        try store.remove(removal)
-        XCTAssertFalse(fm.fileExists(atPath: source.path))
-        XCTAssertTrue(fm.fileExists(atPath: trash.path))
-        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), source.path)
+        try store.unlink(model)
+        XCTAssertTrue(store.models.isEmpty)
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), alternate.path)
+        XCTAssertEqual(try Data(contentsOf: source), originalBytes)
+        XCTAssertEqual(try Data(contentsOf: alternate), alternateBytes)
     }
 
     func testManagedCheckpointRemovalChecksOwnershipAndMovesWholePackage() throws {
@@ -100,19 +94,76 @@ final class ModelStoreTests: XCTestCase {
             return trash
         })
         let marker = package.appendingPathComponent(".refract-managed-model")
+        let removal = try XCTUnwrap(store.removal(for: model))
+        XCTAssertThrowsError(try store.unlink(model))
         try "unrelated".write(to: marker, atomically: true, encoding: .utf8)
-        XCTAssertThrowsError(try store.remove(store.removal(for: model)))
+        XCTAssertThrowsError(try store.remove(removal))
         try entry.provenanceID.write(to: marker, atomically: true, encoding: .utf8)
         let foreign = package.appendingPathComponent("my-original.png")
         try Data([42]).write(to: foreign)
-        XCTAssertThrowsError(try store.remove(store.removal(for: model)))
+        XCTAssertThrowsError(try store.remove(removal))
         XCTAssertEqual(try Data(contentsOf: foreign), Data([42]))
         XCTAssertEqual(store.models, [model])
         try FileManager.default.removeItem(at: foreign)
-        try store.remove(store.removal(for: model))
+        try store.remove(removal)
         XCTAssertTrue(FileManager.default.fileExists(atPath: trash.appendingPathComponent(file.lastPathComponent).path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: package.path))
         XCTAssertTrue(ModelStore(directory: root).models.isEmpty)
+    }
+
+    func testCatalogRowsKeepIdentityWhenModelsBecomeAvailable() throws {
+        let juggernaut = try XCTUnwrap(ModelStore.catalog.first { $0.id == "juggernaut-xi" })
+        let zImage = try XCTUnwrap(ModelStore.catalog.first { $0.id == "z-image-turbo-q4" })
+        XCTAssertFalse(juggernaut.canDownload)
+        XCTAssertNotNil(juggernaut.checkpointFile)
+        let linked = StudioModel(id: juggernaut.identity + "+config", name: "My Juggernaut", kind: .generation,
+                                 path: "/unused/juggernaut.safetensors", variant: juggernaut.variant, configPath: "/unused",
+                                 precision: "FP16", license: juggernaut.license, bytes: 1, managed: false)
+        let installed = StudioModel(id: zImage.identity, name: zImage.name, kind: .generation,
+                                    path: "/unused/z-image", variant: zImage.variant, configPath: nil,
+                                    precision: zImage.precision, license: zImage.license, bytes: 1, managed: true)
+        let lora = StudioModel(id: "local-adapter", name: "My LoRA", kind: .lora, path: "/unused/lora.safetensors",
+                               variant: "sdxl-lora", configPath: nil, precision: "FP16", license: "Custom",
+                               bytes: 1, managed: false)
+        let entries = [juggernaut, zImage]
+        let before = ModelCatalogRow.make(catalog: entries, localModels: [lora])
+        let after = ModelCatalogRow.make(catalog: entries, localModels: [linked, installed, lora])
+        XCTAssertEqual(before.map(\.id), after.map(\.id))
+        XCTAssertEqual(after.first { $0.id == .curated(juggernaut.id) }?.model, linked)
+        XCTAssertEqual(after.first { $0.id == .curated(zImage.id) }?.model, installed)
+        XCTAssertEqual(after.first { $0.id == .local(lora.id) }?.kind, .lora)
+    }
+
+    func testCancelInterruptedDownloadOnlyDiscardsOwnedPartialFiles() throws {
+        let root = try temporaryDirectory()
+        let entry = try XCTUnwrap(ModelStore.catalog.first { $0.id == "sdxl-base-1-0" })
+        let store = ModelStore(directory: root)
+        let fm = FileManager.default
+        let packages = store.modelDirectory.appendingPathComponent("Refract Packages")
+        let installed = packages.appendingPathComponent(entry.id)
+        let staging = packages.appendingPathComponent(".\(entry.id).partial")
+        for directory in [staging, installed] {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data([1]).write(to: directory.appendingPathComponent(try XCTUnwrap(entry.checkpointFile).path))
+        }
+        let marker = staging.appendingPathComponent(".refract-managed-model")
+        try "unrelated".write(to: marker, atomically: true, encoding: .utf8)
+        XCTAssertThrowsError(try store.cancelDownload(entry))
+
+        try entry.provenanceID.write(to: marker, atomically: true, encoding: .utf8)
+        let foreign = staging.appendingPathComponent("user-image.png")
+        try Data([42]).write(to: foreign)
+        XCTAssertThrowsError(try store.cancelDownload(entry))
+        XCTAssertEqual(try Data(contentsOf: foreign), Data([42]))
+        try fm.removeItem(at: foreign)
+
+        let restored = ModelStore(directory: root)
+        XCTAssertTrue(restored.hasPartialDownload(entry))
+        try restored.cancelDownload(entry)
+        XCTAssertFalse(restored.hasPartialDownload(entry))
+        XCTAssertFalse(fm.fileExists(atPath: staging.path))
+        XCTAssertTrue(fm.fileExists(atPath: installed.path))
+        XCTAssertNil(restored.downloads[entry.id])
     }
 
     func testResumeAppendsOnlyMatchingRangeAndRestartsOnFullResponse() throws {

@@ -58,6 +58,37 @@ final class StudioTests: XCTestCase {
         return url
     }
 
+    func testMLXProfilesApplyOnlySupportedGenerationSettings() {
+        let reference = URL(fileURLWithPath: "/unused/reference.png")
+        var draft = GenerationOptions()
+        draft.reference = reference
+        draft.preserveReferenceSize = true
+        draft.loras = [LoRAChoice(modelID: "sdxl-adapter")]
+        draft.negativePrompt = "text and watermark"
+        draft.predictionType = "epsilon"
+        draft.zeroTerminalSNR = true
+        draft.autoEnhance = true
+
+        for profile in [GenerationProfile.krea, .qwen, .zImageTurbo] {
+            var queued = draft
+            profile.defaultSampling.apply(to: &queued)
+            profile.configure(&queued)
+            XCTAssertNil(queued.reference)
+            XCTAssertNil(queued.preserveReferenceSize)
+            XCTAssertTrue(queued.loras.isEmpty)
+            XCTAssertNil(queued.predictionType)
+            XCTAssertNil(queued.zeroTerminalSNR)
+            XCTAssertEqual(queued.sampler, "Native")
+            XCTAssertTrue(queued.autoEnhance)
+            XCTAssertEqual(profile.dimensionMultiple, 16)
+            XCTAssertEqual(queued.negativePrompt, profile == .qwen ? draft.negativePrompt : "")
+            if profile == .zImageTurbo { XCTAssertEqual(queued.guidance, 0) }
+        }
+        var sdxl = draft
+        GenerationProfile.sdxl.configure(&sdxl)
+        XCTAssertEqual(sdxl, draft)
+    }
+
     @MainActor func testSnapshotPartialFailureRetryAndPreserveSource() async throws {
         let root = try temporary(), models = ModelStore(directory:root), client = TestClient()
         let source = try checkpoint(root)
@@ -248,6 +279,50 @@ final class StudioTests: XCTestCase {
         let result = try XCTUnwrap(studio.jobs.first?.results.first?.original)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: result.appendingPathExtension("json"))) as? [String: Any])
         XCTAssertEqual((json["request"] as? [String: Any])?["inputPath"] as? String, original.path)
+    }
+
+    @MainActor func testRemoveQueuedJobsKeepsRunningJobAndPersists() async throws {
+        let root = try temporary(), models = ModelStore(directory: root), client = TestClient()
+        try await models.importModel(at: checkpoint(root))
+        let defaults = isolatedDefaults()
+        let store = StudioStore(models: models, worker: client, directory: root, defaults: defaults)
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.generation.prompt = "Keep the running job"
+        store.generation.width = 64
+        store.generation.height = 64
+        client.onRender = { _ in
+            XCTAssertEqual(store.jobs.filter { $0.status == .pending }.count, 2)
+            store.removeQueuedJobs()
+            XCTAssertEqual(store.jobs.map(\.status), [.running])
+        }
+        defer { client.onRender = nil }
+        store.generate()
+        store.generate()
+        store.generate()
+        try await wait(store)
+        XCTAssertEqual(store.jobs.map(\.status), [.completed])
+        XCTAssertEqual(client.requests.count, 1)
+
+        let reopened = StudioStore(models: models, worker: TestClient(), directory: root, defaults: defaults)
+        XCTAssertEqual(reopened.jobs.map(\.status), [.completed])
+    }
+
+    @MainActor func testRemoveQueuedJobsCancelsReservedJobBeforeItStarts() async throws {
+        let root = try temporary(), models = ModelStore(directory: root), client = TestClient()
+        try await models.importModel(at: checkpoint(root))
+        let store = StudioStore(models: models, worker: client, directory: root, defaults: isolatedDefaults())
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.generation.width = 64
+        store.generation.height = 64
+        store.generation.prompt = "Remove before starting"
+        store.generate()
+        store.removeQueuedJobs()
+        XCTAssertTrue(store.jobs.isEmpty)
+        store.generation.prompt = "Run the next job"
+        store.generate()
+        try await wait(store)
+        XCTAssertEqual(store.jobs.map(\.status), [.completed])
+        XCTAssertEqual(client.requests.map(\.prompt), ["Run the next job"])
     }
 
     @MainActor func testCancelPendingAndRunningJob() async throws {

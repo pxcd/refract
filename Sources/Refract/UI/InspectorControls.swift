@@ -21,7 +21,10 @@ struct GenerationControls: View {
     @State private var advanced = false
     @State private var referenceDimensions: (URL, ModelImageSize)?
 
-    private var usesReferenceResolution: Bool { studio.generation.reference != nil && studio.generation.preserveReferenceSize == true }
+    private var profile: GenerationProfile { studio.generationProfile }
+    private var usesReferenceResolution: Bool {
+        profile.usesSDXLControls && studio.generation.reference != nil && studio.generation.preserveReferenceSize == true
+    }
 
     private var outputDimensions: ModelImageSize? {
         if usesReferenceResolution {
@@ -34,8 +37,8 @@ struct GenerationControls: View {
                            (1216, 832, "Landscape"), (768, 1344, "Tall"), (1344, 768, "Wide")]
 
     var body: some View {
-        Section("Checkpoint") {
-            ModelPicker(title: "Checkpoint", kind: .generation, id: $studio.activeGenerationID, showsTitle: false)
+        Section("Generation model") {
+            ModelPicker(title: "Generation model", kind: .generation, id: $studio.activeGenerationID, showsTitle: false)
         }
         Section("Prompt") {
             ZStack(alignment: .topLeading) {
@@ -54,44 +57,46 @@ struct GenerationControls: View {
                 }
             }
         }
-        Section("Reference image") {
-            if let reference = studio.generation.reference {
-                HStack {
-                    ImageThumb(url: reference).frame(width: 34, height: 34).clipShape(RoundedRectangle(cornerRadius: 4))
-                    Text(reference.lastPathComponent).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    Button { studio.generation.reference = nil } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.borderless).help("Remove reference")
+        if profile.usesSDXLControls {
+            Section("Reference image") {
+                if let reference = studio.generation.reference {
+                    HStack {
+                        ImageThumb(url: reference).frame(width: 34, height: 34).clipShape(RoundedRectangle(cornerRadius: 4))
+                        Text(reference.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button { studio.generation.reference = nil } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.borderless).help("Remove reference")
+                    }
+                    Toggle("Use Reference Resolution", isOn: Binding(
+                        get: { studio.generation.preserveReferenceSize == true },
+                        set: { studio.generation.preserveReferenceSize = $0 }
+                    ))
+                    .toggleStyle(.switch)
+                    ValueSlider(label: "Denoise strength", value: $studio.generation.strength, range: 0.01...1)
+                } else {
+                    Button {
+                        if let url = StudioPanels.choose("Choose reference image", types: [.image]).first { setReference(url) }
+                    } label: {
+                        Label("Add Image…", systemImage: "photo.badge.plus")
+                    }
+                    .buttonStyle(.link)
+                    .accessibilityHint("Switches to image-to-image generation")
                 }
-                Toggle("Use Reference Resolution", isOn: Binding(
-                    get: { studio.generation.preserveReferenceSize == true },
-                    set: { studio.generation.preserveReferenceSize = $0 }
-                ))
-                .toggleStyle(.switch)
-                ValueSlider(label: "Denoise strength", value: $studio.generation.strength, range: 0.01...1)
-            } else {
-                Button {
-                    if let url = StudioPanels.choose("Choose reference image", types: [.image]).first { setReference(url) }
-                } label: {
-                    Label("Add Image…", systemImage: "photo.badge.plus")
+            }
+            .dropDestination(for: URL.self) { urls, _ in
+                guard let first = urls.first, UTType(filenameExtension: first.pathExtension)?.conforms(to: .image) == true else { return false }
+                setReference(first)
+                return true
+            }
+            .task(id: studio.generation.reference) {
+                guard let url = studio.generation.reference else {
+                    referenceDimensions = nil
+                    return
                 }
-                .buttonStyle(.link)
-                .accessibilityHint("Switches to image-to-image generation")
-            }
-        }
-        .dropDestination(for: URL.self) { urls, _ in
-            guard let first = urls.first, UTType(filenameExtension: first.pathExtension)?.conforms(to: .image) == true else { return false }
-            setReference(first)
-            return true
-        }
-        .task(id: studio.generation.reference) {
-            guard let url = studio.generation.reference else {
-                referenceDimensions = nil
-                return
-            }
-            let dimensions = await Task.detached(priority: .utility) { try? ImageFiles.dimensions(of: url) }.value
-            if !Task.isCancelled {
-                referenceDimensions = dimensions.map { (url, ModelImageSize(width: $0.0, height: $0.1)) }
+                let dimensions = await Task.detached(priority: .utility) { try? ImageFiles.dimensions(of: url) }.value
+                if !Task.isCancelled {
+                    referenceDimensions = dimensions.map { (url, ModelImageSize(width: $0.0, height: $0.1)) }
+                }
             }
         }
         Section("Output") {
@@ -128,6 +133,9 @@ struct GenerationControls: View {
             }
         }
         Section {
+            advancedControls
+        }
+        Section {
             Toggle("Enhance after generation", isOn: $studio.generation.autoEnhance)
                 .toggleStyle(.switch)
             if studio.generation.autoEnhance {
@@ -138,18 +146,39 @@ struct GenerationControls: View {
                 }
             }
         }
-        Section {
-            advancedControls
-        }
     }
 
     private var advancedControls: some View {
-        DisclosureGroup("Advanced", isExpanded: $advanced) {
-            VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                advanced.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: advanced ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 10)
+                        .accessibilityHidden(true)
+                    Text("Advanced")
+                }
+                .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(advanced ? "Expanded" : "Collapsed")
+
+            if advanced { advancedFields }
+        }
+    }
+
+    private var advancedFields: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if profile.supportsNegativePrompt {
                 ControlSection(title: "Negative prompt") {
                     TextField("Exclude from image", text: $studio.generation.negativePrompt, axis: .vertical)
                         .textFieldStyle(.roundedBorder).lineLimit(2...5)
                 }
+            }
+            if profile.usesSDXLControls {
                 Picker("Prediction", selection: $studio.generation.predictionType) {
                     Text("Checkpoint default").tag(nil as String?)
                     Text("Epsilon").tag(Optional("epsilon"))
@@ -160,8 +189,12 @@ struct GenerationControls: View {
                     Text("Zero").tag(Optional(true))
                     Text("Standard").tag(Optional(false))
                 }
-                Stepper("Steps: \(studio.generation.steps)", value: $studio.generation.steps, in: 1...150)
+            }
+            Stepper("Steps: \(studio.generation.steps)", value: $studio.generation.steps, in: 1...150)
+            if profile.supportsGuidance {
                 ValueSlider(label: "Guidance", value: $studio.generation.guidance, range: 0...20, step: 0.1)
+            }
+            if profile.usesSDXLControls {
                 Picker("Sampler", selection: $studio.generation.sampler) {
                     ForEach(["DPM++ 2M", "Euler", "Euler a", "DDIM"], id: \.self) { Text($0) }
                 }
@@ -172,12 +205,14 @@ struct GenerationControls: View {
                     Text("Default").tag("Default")
                     Text("Karras").tag("Karras").disabled(!["DPM++ 2M", "Euler"].contains(studio.generation.sampler))
                 }
-                Toggle("Random seed", isOn: Binding(get: { studio.generation.seed == nil }, set: {
-                    studio.generation.seed = $0 ? nil : 0
-                }))
-                if studio.generation.seed != nil {
-                    NumberInput("Seed", value: Binding(get: { studio.generation.seed ?? 0 }, set: { studio.generation.seed = $0 }))
-                }
+            }
+            Toggle("Random seed", isOn: Binding(get: { studio.generation.seed == nil }, set: {
+                studio.generation.seed = $0 ? nil : 0
+            }))
+            if studio.generation.seed != nil {
+                NumberInput("Seed", value: Binding(get: { studio.generation.seed ?? 0 }, set: { studio.generation.seed = $0 }))
+            }
+            if profile.usesSDXLControls {
                 Divider()
                 ControlSection(title: "LoRA adapters") {
                     ForEach($studio.generation.loras) { $choice in
@@ -201,7 +236,6 @@ struct GenerationControls: View {
                     }.fixedSize()
                 }
             }
-            .padding(.top, 8)
         }
     }
 
