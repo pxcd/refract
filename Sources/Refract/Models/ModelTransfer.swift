@@ -3,20 +3,19 @@ import Foundation
 /// A serial URLSession delegate writes whole network chunks. An interrupted transfer
 /// leaves a prefix on disk that can resume after cancellation, failure or app restart.
 final class ModelTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    private let destination: URL
+    private let output: FileHandle
     private let size: Int64
     private let progress: @Sendable (Int64) -> Void
     private var received: Int64
     private var lastProgress: TimeInterval = 0
-    private var handle: FileHandle?
     private var failure: Error?
     private var continuation: CheckedContinuation<Void, Error>?
     private let lock = NSLock()
     private var task: URLSessionDataTask?
     private var cancelled = false
 
-    init(destination: URL, received: Int64, size: Int64, progress: @escaping @Sendable (Int64) -> Void) {
-        self.destination = destination
+    init(output: FileHandle, received: Int64, size: Int64, progress: @escaping @Sendable (Int64) -> Void) {
+        self.output = output
         self.received = received
         self.size = size
         self.progress = progress
@@ -61,11 +60,6 @@ final class ModelTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable
                 let range = http.value(forHTTPHeaderField: "Content-Range")
                 guard range == "bytes \(received)-\(size - 1)/\(size)" else { throw ModelError("The model server returned an unexpected byte range.") }
             } else { received = 0 }
-            if !FileManager.default.fileExists(atPath: destination.path) {
-                try Data().write(to: destination, options: .withoutOverwriting)
-            }
-            let output = try FileHandle(forWritingTo: destination)
-            handle = output
             try output.truncate(atOffset: UInt64(received))
             try output.seek(toOffset: UInt64(received))
             completionHandler(.allow)
@@ -73,10 +67,10 @@ final class ModelTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard failure == nil, let handle else { return }
+        guard failure == nil else { return }
         do {
             guard received + Int64(data.count) <= size else { throw ModelError("The downloaded file exceeds its declared size.") }
-            try handle.write(contentsOf: data)
+            try output.write(contentsOf: data)
             received += Int64(data.count)
             let now = ProcessInfo.processInfo.systemUptime
             if received == size || now - lastProgress > 0.2 { lastProgress = now; progress(received) }
@@ -84,8 +78,6 @@ final class ModelTransfer: NSObject, URLSessionDataDelegate, @unchecked Sendable
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        do { try handle?.close() } catch { failure = failure ?? error }
-        handle = nil
         lock.lock(); let stopped = cancelled; self.task = nil; lock.unlock()
         if stopped { continuation?.resume(throwing: CancellationError()) }
         else if let problem = failure ?? error { continuation?.resume(throwing: problem) }

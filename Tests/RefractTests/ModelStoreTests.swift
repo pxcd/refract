@@ -89,7 +89,7 @@ final class ModelStoreTests: XCTestCase {
         try JSONEncoder().encode(index).write(to: root.appendingPathComponent("model-index.json"))
         let trash = root.appendingPathComponent("isolated-trash")
         let store = ModelStore(directory: root, trash: { url in
-            XCTAssertEqual(url.path, package.path)
+            XCTAssertEqual(url.path, try ManagedModelDirectory.root(at: package, create: false).url.path)
             try FileManager.default.moveItem(at: url, to: trash)
             return trash
         })
@@ -109,6 +109,50 @@ final class ModelStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: trash.appendingPathComponent(file.lastPathComponent).path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: package.path))
         XCTAssertTrue(ModelStore(directory: root).models.isEmpty)
+    }
+
+    func testSeparateStoresMergeImportsAndUnlinksOnDisk() async throws {
+        let root = try temporaryDirectory()
+        let first = ModelStore(directory: root)
+        let second = ModelStore(directory: root)
+        let firstURL = root.appendingPathComponent("first.safetensors")
+        let secondURL = root.appendingPathComponent("second.safetensors")
+        try writeAdapter(to: firstURL)
+        var alternate = try Data(contentsOf: firstURL)
+        alternate[alternate.count - 1] = 1
+        try alternate.write(to: secondURL)
+        let firstModel = try await first.importModel(at: firstURL)
+        let secondModel = try await second.importModel(at: secondURL)
+        XCTAssertEqual(Set(second.models.map(\.id)), [firstModel.id, secondModel.id])
+        try first.unlink(firstModel)
+        XCTAssertEqual(ModelStore(directory: root).models, [secondModel])
+        XCTAssertThrowsError(try second.unlink(firstModel))
+    }
+
+    func testPackageBindingSurvivesReopenAndDistinguishesInstallations() throws {
+        let root = try ManagedModelDirectory.root(at: temporaryDirectory())
+        let first = try root.child("first", create: true).identity()
+        let second = try root.child("second", create: true).identity()
+        let persisted = try JSONDecoder().decode(ManagedPackageIdentity.self, from: JSONEncoder().encode(first))
+        XCTAssertTrue(try persisted.matches(root.child("first").identity()))
+        XCTAssertFalse(persisted.matches(second))
+    }
+
+    func testPackageLeaseProtectsCancellationUntilReleased() throws {
+        let root = try temporaryDirectory()
+        let store = ModelStore(directory: root)
+        let entry = try XCTUnwrap(ModelStore.catalog.first { $0.canDownload })
+        let packages = try ManagedModelDirectory.root(at: store.modelDirectory).child("Refract Packages", create: true)
+        let partial = try packages.child(".\(entry.id).partial", create: true)
+        let marker = try partial.file(".refract-managed-model", writing: true, create: true)
+        try marker.write(contentsOf: Data(entry.provenanceID.utf8))
+        try marker.close()
+        let lease = try packages.lock(".\(entry.id).lock")
+        XCTAssertThrowsError(try store.cancelDownload(entry))
+        XCTAssertTrue(store.hasPartialDownload(entry))
+        try lease.close()
+        try store.cancelDownload(entry)
+        XCTAssertFalse(store.hasPartialDownload(entry))
     }
 
     func testCatalogRowsKeepIdentityWhenModelsBecomeAvailable() throws {
@@ -176,7 +220,9 @@ final class ModelStoreTests: XCTestCase {
         for (status, range, disposition, data) in [(206, "bytes 3-5/6", URLSession.ResponseDisposition.allow, "def"),
                                                   (206, "bytes 1-3/6", .cancel, ""), (200, "", .allow, "abcdef")] {
             try Data("abc".utf8).write(to: destination)
-            let transfer = ModelTransfer(destination: destination, received: 3, size: 6, progress: { _ in })
+            let output = try FileHandle(forWritingTo: destination)
+            defer { try? output.close() }
+            let transfer = ModelTransfer(output: output, received: 3, size: 6, progress: { _ in })
             let response = try XCTUnwrap(HTTPURLResponse(url: address, statusCode: status, httpVersion: "HTTP/1.1",
                                                          headerFields: range.isEmpty ? [:] : ["Content-Range": range]))
             transfer.urlSession(session, dataTask: task, didReceive: response) { XCTAssertEqual($0, disposition) }

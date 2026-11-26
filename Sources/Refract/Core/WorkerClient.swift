@@ -77,15 +77,17 @@ final class WorkerClient: InferenceClient {
         }
         let child = Process()
         child.executableURL = python
-        child.arguments = ["-s", "-u", script.path]
-        var environment = ProcessInfo.processInfo.environment
-        for name in ["PYTHONPATH","PYTHONHOME","VIRTUAL_ENV","PYTORCH_ENABLE_MPS_FALLBACK"] { environment.removeValue(forKey: name) }
-        environment["HF_HUB_OFFLINE"] = "1"
-        environment["TRANSFORMERS_OFFLINE"] = "1"
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment["PYTHONNOUSERSITE"] = "1"
-        environment["TOKENIZERS_PARALLELISM"] = "false"
-        child.environment = environment
+        child.arguments = ["-I", "-B", "-u", script.path]
+        child.environment = [
+            "HOME": FileManager.default.homeDirectoryForCurrentUser.path,
+            "TMPDIR": FileManager.default.temporaryDirectory.path,
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "LANG": "en_US.UTF-8",
+            "HF_HUB_OFFLINE": "1",
+            "HF_HUB_DISABLE_TELEMETRY": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "TOKENIZERS_PARALLELISM": "false"
+        ]
         let stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         child.standardInput = stdin
         child.standardOutput = stdout

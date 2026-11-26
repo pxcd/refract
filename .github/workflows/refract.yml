@@ -54,11 +54,6 @@ jobs:
           else
             echo "tag=$tag" >> "$GITHUB_OUTPUT"
           fi
-      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
-        if: steps.version.outputs.tag != ''
-        with:
-          version: '0.13.10'
-          enable-cache: false
       - name: Package app and verify signature
         if: steps.version.outputs.tag != ''
         env:

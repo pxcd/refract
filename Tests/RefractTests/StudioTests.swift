@@ -365,7 +365,73 @@ final class StudioTests: XCTestCase {
         XCTAssertEqual(client.requests.count, 2)
         let result = try XCTUnwrap(studio.jobs.first?.results.first?.original)
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: result.appendingPathExtension("json"))) as? [String: Any])
-        XCTAssertEqual((json["request"] as? [String: Any])?["inputPath"] as? String, original.path)
+        XCTAssertNil((json["request"] as? [String: Any])?["inputPath"])
+        let receipt = try Data(contentsOf: result.appendingPathExtension("json"))
+        XCTAssertFalse(String(decoding: receipt, as: UTF8.self).contains(root.path))
+        XCTAssertFalse(String(decoding: receipt, as: UTF8.self).contains(studio.generation.prompt))
+    }
+
+    @MainActor func testExportsIgnoreSourceSidecarsAndShareOnlyExplicitSettings() async throws {
+        let root = try temporary()
+        let models = ModelStore(directory: root)
+        let checkpointFile = try checkpoint(root)
+        let model = try await models.importModel(at: checkpointFile)
+        let store = StudioStore(models: models, worker: TestClient(), directory: root, defaults: isolatedDefaults())
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.generation.prompt = "A quiet seaside"
+        store.generation.seed = 543
+        store.generation.width = 64
+        store.generation.height = 64
+        store.generate()
+        try await wait(store)
+        let job = try XCTUnwrap(store.jobs.first)
+        let result = try XCTUnwrap(job.results.first)
+
+        let sidecar = result.original.appendingPathExtension("json")
+        try Data("unrelated companion".utf8).write(to: sidecar)
+        let plain = root.appendingPathComponent("plain.png")
+        try store.save(result.original, to: plain)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: plain.appendingPathExtension("json").path))
+        let shared = root.appendingPathComponent("shared.jpg")
+        let settings = try XCTUnwrap(SharedGenerationSettings(job: job, result: result, image: result.original))
+        try store.save(result.original, to: shared, settings: settings)
+        let data = try Data(contentsOf: shared.appendingPathExtension("json"))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["model"] as? String, model.id)
+        XCTAssertEqual(json["prompt"] as? String, "A quiet seaside")
+        XCTAssertEqual(json["seed"] as? Int, 543)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains(root.path))
+        XCTAssertNil(SharedGenerationSettings(job: job, result: result, image: checkpointFile))
+    }
+
+    @MainActor func testErasingFinishedJobsKeepsActiveWorkAndImageFiles() async throws {
+        let root = try temporary(), catalog = ModelStore(directory: root), client = TestClient()
+        try await catalog.importModel(at: checkpoint(root))
+        let store = StudioStore(models: catalog, worker: client, directory: root, defaults: isolatedDefaults())
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.generation.width = 64
+        store.generation.height = 64
+        store.generation.prompt = "A forgotten prompt"
+        store.generate()
+        try await wait(store)
+        let image = try XCTUnwrap(store.jobs.first?.results.first?.original)
+        try store.clearGenerationHistory()
+        store.generation.prompt = "Keep this job"
+        client.onRender = { _ in try store.eraseFinishedGenerationJobs() }
+        defer { client.onRender = nil }
+        store.generate()
+        try await wait(store)
+        XCTAssertEqual(store.jobs.map { $0.recipe.generation.prompt }, ["Keep this job"])
+        let queue = try Data(contentsOf: root.appendingPathComponent("jobs.json"))
+        XCTAssertFalse(String(decoding: queue, as: UTF8.self).contains("A forgotten prompt"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: image.path))
+    }
+
+    func testPixelBudgetAppliesToImagesAndEnhancementOutputs() throws {
+        XCTAssertNoThrow(try ImageFiles.validateDimensions(width: 8192, height: 8192))
+        XCTAssertThrowsError(try ImageFiles.validateDimensions(width: 8192, height: 8193))
+        XCTAssertThrowsError(try ImageFiles.validateDimensions(width: Int.max, height: Int.max))
+        XCTAssertThrowsError(try ImageFiles.outputDimensions(width: 6000, height: 6000, options: EnhancementOptions()))
     }
 
     @MainActor func testRemoveQueuedJobsKeepsRunningJobAndPersists() async throws {

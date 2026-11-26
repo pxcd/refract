@@ -17,7 +17,7 @@ enum StudioPanels {
         return panel.runModal() == .OK ? panel.urls : []
     }
 
-    @MainActor static func save(_ source: URL, studio: StudioStore) {
+    @MainActor static func save(_ source: URL, studio: StudioStore, settings: SharedGenerationSettings?) {
         let panel = NSSavePanel()
         let originalType = UTType(filenameExtension: source.pathExtension)
         let format = ExportFormat.allCases.first { $0.contentType == originalType } ?? studio.exportFormat
@@ -25,9 +25,10 @@ enum StudioPanels {
         panel.allowedContentTypes = [format.contentType]
         panel.nameFieldStringValue = copyName(for: source, in: studio.outputDirectory, format: format)
         panel.isExtensionHidden = false
-        panel.accessoryView = SaveFormatPicker(panel: panel, source: source, initial: format)
+        let accessory = SaveFormatPicker(panel: panel, source: source, initial: format, offersSettings: settings != nil)
+        panel.accessoryView = accessory
         guard panel.runModal() == .OK, let target = panel.url else { return }
-        do { try studio.save(source, to: target) }
+        do { try studio.save(source, to: target, settings: accessory.includesSettings ? settings : nil) }
         catch { studio.notice = error.localizedDescription }
     }
 
@@ -59,13 +60,16 @@ private extension ExportFormat {
     private let source: URL
     private var suggestedName: String
 
-    init(panel: NSSavePanel, source: URL, initial: ExportFormat) {
+    private let settingsButton = NSButton(checkboxWithTitle: "Include generation settings", target: nil, action: nil)
+    var includesSettings: Bool { settingsButton.state == .on }
+
+    init(panel: NSSavePanel, source: URL, initial: ExportFormat, offersSettings: Bool) {
         self.panel = panel
         self.source = source
         suggestedName = panel.nameFieldStringValue
         super.init(frame: .zero)
-        orientation = .horizontal
-        alignment = .centerY
+        orientation = .vertical
+        alignment = .leading
         spacing = 8
         edgeInsets = NSEdgeInsets(top: 12, left: 20, bottom: 12, right: 20)
         let picker = NSPopUpButton()
@@ -80,11 +84,14 @@ private extension ExportFormat {
         let label = NSTextField(labelWithString: "Format:")
         label.alignment = .right
         label.textColor = .secondaryLabelColor
-        addArrangedSubview(label)
-        label.widthAnchor.constraint(equalToConstant: 72).isActive = true
-        addArrangedSubview(picker)
-        picker.setContentHuggingPriority(.required, for: .horizontal)
-        addArrangedSubview(NSView())
+        let row = NSStackView(views: [label, picker])
+        row.spacing = 8
+        addArrangedSubview(row)
+        if offersSettings {
+            settingsButton.state = .off
+            settingsButton.toolTip = "Write a companion JSON file with the prompt, seed, models, and generation settings."
+            addArrangedSubview(settingsButton)
+        }
         setFrameSize(fittingSize)
     }
 
@@ -222,6 +229,11 @@ struct StudioView: View {
             hiddenSourcePreviews.remove(.enhance)
             enhancementResult = nil
             studio.selectedResult = nil
+        }
+        .onChange(of: studio.jobs.map(\.id)) { _, _ in
+            if let result = generationResult, !studio.jobs.contains(where: { $0.results.contains(result) }) {
+                generationResult = nil
+            }
         }
         .onChange(of: studio.selectedResult) { _, result in
             guard let result else {
@@ -452,11 +464,11 @@ struct StudioView: View {
                 Divider()
             }
             Button("Show in Finder", systemImage: "folder") { studio.reveal(displayed) }
-            Button("Save As…", systemImage: "square.and.arrow.up") { StudioPanels.save(displayed, studio: studio) }
+            Button("Save As…", systemImage: "square.and.arrow.up") { StudioPanels.save(displayed, studio: studio, settings: SharedGenerationSettings(job: job, result: result, image: displayed)) }
             if result.enhanced != nil {
                 Divider()
                 Button("Show Original in Finder") { studio.reveal(result.original) }
-                Button("Save Original As…") { StudioPanels.save(result.original, studio: studio) }
+                Button("Save Original As…") { StudioPanels.save(result.original, studio: studio, settings: SharedGenerationSettings(job: job, result: result, image: result.original)) }
             }
             if job.recipe.generator != nil {
                 Divider()
@@ -496,7 +508,8 @@ struct ImageThumb: View {
         .task(id: url) {
             thumbnail = nil
             let value = await Task.detached(priority: .utility) {
-                guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil as CGImage? }
+                guard url.isFileURL, let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+                      (try? ImageFiles.dimensions(of: src)) != nil else { return nil as CGImage? }
                 let opts: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
                                             kCGImageSourceCreateThumbnailWithTransform: true,
                                             kCGImageSourceThumbnailMaxPixelSize: 144]

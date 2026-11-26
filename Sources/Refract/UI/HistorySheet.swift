@@ -8,6 +8,7 @@ struct HistorySheet: View {
     @State private var query = ""
     @State private var legacyDates: [URL: Date] = [:]
     @State private var confirmClear = false
+    @State private var confirmErase = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -22,8 +23,12 @@ struct HistorySheet: View {
             HStack {
                 Text("Render History").font(.title2.bold())
                 Spacer()
-                Button("Clear History…", role: .destructive) { confirmClear = true }
-                    .disabled(history.isEmpty)
+                Menu("Manage History") {
+                    Button("Clear History…") { confirmClear = true }
+                        .disabled(history.isEmpty)
+                    Button("Erase Finished Generation Jobs…", role: .destructive) { confirmErase = true }
+                        .disabled(!studio.hasFinishedGenerationJobs)
+                }
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
@@ -71,6 +76,15 @@ struct HistorySheet: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Your image files and job queue will remain available.")
+        }
+        .confirmationDialog("Erase finished generation jobs from this Mac?", isPresented: $confirmErase) {
+            Button("Erase Jobs and Prompts", role: .destructive) {
+                do { try studio.eraseFinishedGenerationJobs() }
+                catch { errorMessage = error.localizedDescription }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently removes completed, failed, and canceled generation jobs, their settings, and thumbnails from Refract. Active jobs, images, and existing companion files stay on disk. Older companion files may contain prompts.")
         }
         .alert("Render History", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK") { errorMessage = nil }

@@ -7,32 +7,36 @@ private struct ImagePair: Equatable {
     let enhanced: URL?
 }
 
+private struct PreviewRequest: Equatable {
+    let pair: ImagePair
+    let maxEdge: Int?
+}
+
 private struct Raster {
     let image: NSImage
     let pixels: CGSize
 
-    init(url: URL) throws {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = properties[kCGImagePropertyPixelWidth] as? Int,
-              let height = properties[kCGImagePropertyPixelHeight] as? Int else {
+    init(url: URL, maxEdge: Int?) throws {
+        guard url.isFileURL, let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             throw CocoaError(.fileReadCorruptFile)
         }
+        let (width, height) = try ImageFiles.dimensions(of: source)
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: max(width, height)
+            kCGImageSourceThumbnailMaxPixelSize: min(maxEdge ?? Int.max, max(width, height))
         ]
         guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        pixels = CGSize(width: cg.width, height: cg.height)
+        pixels = CGSize(width: width, height: height)
         image = NSImage(cgImage: cg, size: pixels)
     }
 }
 
 private struct LoadedImagePair {
+    let pair: ImagePair
     let original: Raster
     let enhanced: Raster?
 }
@@ -40,11 +44,12 @@ private struct LoadedImagePair {
 private actor PreviewLoader {
     static let shared = PreviewLoader()
 
-    func read(_ pair: ImagePair) throws -> LoadedImagePair {
+    func read(_ request: PreviewRequest) throws -> LoadedImagePair {
         try Task.checkCancellation()
-        let original = try Raster(url: pair.original)
+        let pair = request.pair
+        let original = try Raster(url: pair.original, maxEdge: request.maxEdge)
         try Task.checkCancellation()
-        return try LoadedImagePair(original: original, enhanced: pair.enhanced.map(Raster.init(url:)))
+        return try LoadedImagePair(pair: pair, original: original, enhanced: pair.enhanced.map { try Raster(url: $0, maxEdge: request.maxEdge) })
     }
 }
 
@@ -56,12 +61,18 @@ struct ImageViewport: View {
     @State private var loadError: String?
     @State private var split: Double = 0.5
     @State private var zoom: Double? = nil
+    @State private var fitEdge = 1024
+    private var pair: ImagePair { ImagePair(original: original, enhanced: enhanced) }
+    private var request: PreviewRequest { PreviewRequest(pair: pair, maxEdge: zoom == nil ? fitEdge : nil) }
 
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
                 Rectangle().fill(.quaternary.opacity(0.3))
-                if let loaded {
+                if let loadError {
+                    ContentUnavailableView("Preview unavailable", systemImage: "photo.badge.exclamationmark",
+                                           description: Text(loadError))
+                } else if let loaded, loaded.pair == pair {
                     CanvasBridge(images: loaded, scale: displayScale, split: $split, zoom: $zoom)
                         .help(enhanced == nil ? "Pinch to zoom. Drag to pan." : "Drag the divider or press the arrow keys to compare. Pinch to zoom and drag the image to pan.")
                         .accessibilityLabel(enhanced == nil ? "Image preview" : "Before and after comparison")
@@ -80,13 +91,14 @@ struct ImageViewport: View {
                         }
                         .padding(12).allowsHitTesting(false)
                     }
-                } else if let loadError {
-                    ContentUnavailableView("Preview unavailable", systemImage: "photo.badge.exclamationmark",
-                                           description: Text(loadError))
                 } else {
                     ProgressView()
                 }
             }
+            .onGeometryChange(for: Int.self) { geometry in
+                let pixels = max(geometry.size.width, geometry.size.height) * displayScale
+                return max(512, min(8192, Int(ceil(pixels / 512)) * 512))
+            } action: { fitEdge = $0 }
             HStack {
                 if let canvas = loaded?.enhanced ?? loaded?.original {
                     Text("\(Int(canvas.pixels.width)) × \(Int(canvas.pixels.height))")
@@ -112,14 +124,15 @@ struct ImageViewport: View {
             .padding(.trailing, 18)
             .frame(height: 32)
         }
-        .task(id: ImagePair(original: original, enhanced: enhanced)) {
-            let pair = ImagePair(original: original, enhanced: enhanced)
+        .onChange(of: pair) { _, _ in
             loaded = nil
-            loadError = nil
             split = 0.5
             zoom = nil
+        }
+        .task(id: request) {
+            loadError = nil
             do {
-                let value = try await PreviewLoader.shared.read(pair)
+                let value = try await PreviewLoader.shared.read(request)
                 try Task.checkCancellation()
                 loaded = value
             } catch {
@@ -165,7 +178,7 @@ private final class ComparisonCanvas: NSView {
     override var isFlipped: Bool { true }
 
     func configure(images: LoadedImagePair, displayScale: CGFloat, split: Double, zoom: Double?) {
-        if self.images?.original.image !== images.original.image || self.zoom != nil && zoom == nil {
+        if self.images?.pair != images.pair || self.zoom != nil && zoom == nil {
             pan = .zero
         }
         self.images = images

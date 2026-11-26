@@ -33,6 +33,12 @@ final class StudioStore: ObservableObject {
     private let stateURL: URL
     private var queueReadError: String?
     private var underCriticalPressure = false
+    private struct VerifiedRoute {
+        let directory: URL
+        let paths: [String: URL]
+    }
+    private var verifiedRoute: VerifiedRoute?
+    private var scratchSession: RuntimeScratch?
     private var runningID: UUID?
     private var runner: Task<Void, Never>?
     private var pressure: DispatchSourceMemoryPressure?
@@ -77,6 +83,7 @@ final class StudioStore: ObservableObject {
         }
         pressure.resume()
         self.pressure = pressure
+        scratchSession = try? RuntimeScratch()
         schedule()
     }
 
@@ -111,8 +118,9 @@ final class StudioStore: ObservableObject {
             }
             profile.configure(&opts)
             let reference = try opts.reference.map(InputImage.init)
-            if let reference, opts.preserveReferenceSize == true {
-                (opts.width, opts.height) = try ImageFiles.dimensions(of: reference.url)
+            let referenceSize = try reference.map { try ImageFiles.dimensions(of: $0.url) }
+            if let reference, let referenceSize, opts.preserveReferenceSize == true {
+                (opts.width, opts.height) = referenceSize
                 try reference.validate()
             } else {
                 opts.preserveReferenceSize = nil
@@ -121,6 +129,7 @@ final class StudioStore: ObservableObject {
                     throw StudioError("Enter image dimensions of at least 64 pixels on each side, in multiples of \(multiple).")
                 }
             }
+            try ImageFiles.validateDimensions(width: opts.width, height: opts.height)
             guard (1...100).contains(opts.count), opts.steps > 0, (0...1).contains(opts.strength), opts.guidance.isFinite,
                   opts.seed.map({ (0...Int(UInt32.max)).contains($0) }) ?? true else {
                 throw StudioError("Check the image count (1–100), steps, guidance, reference strength, and seed.")
@@ -209,7 +218,7 @@ final class StudioStore: ObservableObject {
         guard let i = jobs.firstIndex(where: { $0.id == id }), [.running,.pending].contains(jobs[i].status) else { return }
         jobs[i].status = .cancelled
         jobs[i].message = "Cancelled"
-        if runningID == id { runner?.cancel(); worker.stop() }
+        if runningID == id { runner?.cancel(); stopWorker() }
         persist()
     }
 
@@ -234,37 +243,25 @@ final class StudioStore: ObservableObject {
 
     func shutdown() {
         if let id = runningID { cancel(id) }
-        worker.stop()
+        stopWorker()
         persist()
     }
 
-    func save(_ url: URL, to destination: URL) throws {
-        if url.standardizedFileURL == destination.standardizedFileURL { return }
-        let fileExtension = destination.pathExtension.lowercased()
+    func save(_ url: URL, to destination: URL, settings: SharedGenerationSettings? = nil) throws {
         let format: ExportFormat
-        switch fileExtension {
+        switch destination.pathExtension.lowercased() {
         case "png": format = .png
         case "tif", "tiff": format = .tiff
         case "jpg", "jpeg": format = .jpeg
         default: throw StudioError("Choose a PNG, JPEG, or TIFF extension.")
         }
         let fm = FileManager.default
-        let existing = fm.fileExists(atPath: destination.path)
-        if existing { throw StudioError("Choose a new filename to preserve the existing file.") }
+        guard !fm.fileExists(atPath: destination.path) else { throw StudioError("Choose a new filename to preserve the existing file.") }
         let temp = destination.deletingLastPathComponent().appendingPathComponent(".refract-" + UUID().uuidString)
         defer { try? fm.removeItem(at: temp) }
-        let copying = format.fileExtension == url.pathExtension.lowercased()
-        if copying { try fm.copyItem(at: url, to: temp) }
-        else { try ImageFiles.export(url, to: temp, format: format, quality: jpegQuality, metadataSource: url) }
-        let sidecar = url.appendingPathExtension("json")
-        var metadata = fm.fileExists(atPath: sidecar.path) ? try Data(contentsOf: sidecar) : nil
-        if let data = metadata, var receipt = try? JSONDecoder().decode(OutputReceipt.self, from: data) {
-            receipt.request.outputPath = destination.path
-            receipt.exportFormat = format
-            if !copying { receipt.jpegQuality = jpegQuality }
-            metadata = try JSONEncoder.pretty.encode(receipt)
-        }
-        try ImageFiles.publishStaged(temp, to: destination, receipt: metadata)
+        // Encode from pixels even for same-format exports to drop embedded source metadata.
+        try ImageFiles.export(url, to: temp, format: format, quality: jpegQuality)
+        try ImageFiles.publishStaged(temp, to: destination, receipt: try settings.map { try JSONEncoder.pretty.encode($0) })
     }
 
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
@@ -293,6 +290,20 @@ final class StudioStore: ObservableObject {
         }
         try writeQueue(updated)
         jobs = updated
+    }
+
+    var hasFinishedGenerationJobs: Bool {
+        jobs.contains { $0.recipe.generator != nil && $0.status != .running && $0.status != .pending }
+    }
+
+    func eraseFinishedGenerationJobs() throws {
+        if let queueReadError { throw StudioError(queueReadError) }
+        let remaining = jobs.filter { $0.recipe.generator == nil || $0.status == .running || $0.status == .pending }
+        try writeQueue(remaining)
+        jobs = remaining
+        if let selectedResult, !remaining.contains(where: { $0.results.contains(selectedResult) }) {
+            self.selectedResult = nil
+        }
     }
 
     func clearFilmstrip(generated: Bool) {
@@ -324,7 +335,24 @@ final class StudioStore: ObservableObject {
             throw StudioError("The generated files are outside their original output folder.")
         }
         let fm = FileManager.default
-        let files = output.flatMap { [$0, $0.appendingPathExtension("json")] }.filter { fm.fileExists(atPath: $0.path) }
+        var files: [URL] = []
+        for image in output {
+            if fm.fileExists(atPath: image.path) {
+                let values = try image.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                    throw StudioError("The output has been replaced. Check its location in Finder.")
+                }
+                files.append(image)
+            }
+            let sidecar = image.appendingPathExtension("json")
+            if fm.fileExists(atPath: sidecar.path) {
+                guard let receipt = try? OutputReceipt.read(sidecar), receipt.jobID == jobs[index].id,
+                      receipt.index == result.index, receipt.request.seed == result.seed else {
+                    throw StudioError("An unrelated companion file occupies this location. Check it in Finder.")
+                }
+                files.append(sidecar)
+            }
+        }
         if !files.isEmpty {
             let name = "Refract " + result.original.deletingPathExtension().lastPathComponent
             let group = directory.appendingPathComponent(name, isDirectory: true)
@@ -344,7 +372,7 @@ final class StudioStore: ObservableObject {
                 for move in moves.reversed() {
                     try fm.moveItem(at: move.staged, to: move.original)
                 }
-                try? fm.removeItem(at: staging)
+                _ = rmdir(staging.path)
                 throw error
             }
         }
@@ -357,6 +385,43 @@ final class StudioStore: ObservableObject {
                 ?? jobs.first(where: { $0.recipe.generator != nil && !$0.filmstripResults.isEmpty })?.filmstripResults.last
         }
         persist()
+    }
+
+    private func stopWorker() {
+        worker.stop()
+        if let directory = verifiedRoute?.directory { try? FileManager.default.removeItem(at: directory) }
+        verifiedRoute = nil
+    }
+
+    private func makeScratchDirectory() throws -> URL {
+        if let scratchSession {
+            do { return try scratchSession.makeDirectory() }
+            catch { self.scratchSession = nil }
+        }
+        let session = try RuntimeScratch()
+        scratchSession = session
+        return try session.makeDirectory()
+    }
+
+    private func verifiedPaths(for stage: [StudioModel]) async throws -> [String: URL] {
+        if let verifiedRoute, Set(verifiedRoute.paths.keys) == Set(stage.map(\.id)) {
+            return verifiedRoute.paths
+        }
+        if verifiedRoute != nil { stopWorker() }
+        let fm = FileManager.default
+        let root = try makeScratchDirectory()
+        do {
+            var paths: [String: URL] = [:]
+            for model in stage where paths[model.id] == nil {
+                paths[model.id] = try await ModelInspector.shared.inferenceSnapshot(of: model, in: root)
+            }
+            try Task.checkCancellation()
+            verifiedRoute = VerifiedRoute(directory: root, paths: paths)
+            return paths
+        } catch {
+            try? fm.removeItem(at: root)
+            throw error
+        }
     }
 
     private func schedule() {
@@ -373,7 +438,7 @@ final class StudioStore: ObservableObject {
         let start = Date()
         let previousTime = job.elapsed
         defer {
-            if Task.isCancelled || !jobs.contains(where: { $0.status == .pending }) { worker.stop() }
+            if Task.isCancelled || !jobs.contains(where: { $0.status == .pending }) { stopWorker() }
             update(job.id) { $0.elapsed = previousTime + Date().timeIntervalSince(start) }
             persist()
             runningID = nil
@@ -384,39 +449,35 @@ final class StudioStore: ObservableObject {
             try Task.checkCancellation()
             update(job.id) { $0.status = .running; $0.message = "Verifying model files"; $0.progress = nil }
             persist()
-            let recipe = job.recipe
-            var resolved: [String: StudioModel] = [:]
-            for model in [recipe.generator,recipe.enhancer].compactMap({ $0 }) + recipe.loras {
-                try Task.checkCancellation()
-                resolved[model.id] = try await models.resolve(model)
-            }
             let timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.update(job.id) { $0.elapsed = previousTime + Date().timeIntervalSince(start) } }
             }
             defer { timer.invalidate() }
-            try await process(job, resolved: resolved)
+            try await process(job)
             try Task.checkCancellation()
             update(job.id) { $0.status = .completed; $0.progress = 1; $0.message = "Completed" }
         } catch {
-            worker.stop()
+            stopWorker()
             if !Task.isCancelled { update(job.id) { $0.status = .failed; $0.message = error.localizedDescription } }
         }
     }
 
-    private func process(_ job: StudioJob, resolved: [String: StudioModel]) async throws {
+    private func process(_ job: StudioJob) async throws {
         let recipe = job.recipe
         let fm = FileManager.default
-        let scratch = fm.temporaryDirectory.appendingPathComponent("refract-" + job.id.uuidString, isDirectory: true)
-        try fm.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let scratch = try makeScratchDirectory()
         defer { try? fm.removeItem(at: scratch) }
         var referenceCopy: URL?
         var results = Dictionary(uniqueKeysWithValues: job.results.map { ($0.index,$0) })
-        let routes = [recipe.generator,recipe.enhancer].compactMap { $0.flatMap { resolved[$0.id] } }
-        let adapters = recipe.loras.compactMap { resolved[$0.id] }
+        let routes = [recipe.generator, recipe.enhancer].compactMap { $0 }
         let count = recipe.seeds.count
         guard count > 0, !routes.isEmpty else { throw StudioError("Empty job.") }
-        for (stage,model) in routes.enumerated() {
+        for (stage, model) in routes.enumerated() {
+            try Task.checkCancellation()
             let generating = model.kind == .generation
+            let adapters = generating ? recipe.loras : []
+            var stagePaths: [String: URL]?
+            var schedulerDefaults: (predictionType: String?, zeroTerminalSNR: Bool?) = (nil, nil)
             for (i, seed) in recipe.seeds.enumerated() {
                 try Task.checkCancellation()
                 if job.trashedResultIndices?.contains(i) == true { continue }
@@ -435,6 +496,7 @@ final class StudioStore: ObservableObject {
                 }
                 let raw = scratch.appendingPathComponent(UUID().uuidString + ".png")
                 let (width,height) = try !generating ? ImageFiles.outputDimensions(for: input!, options: recipe.enhancement) : (recipe.generation.width,recipe.generation.height)
+                try ImageFiles.validateDimensions(width: width, height: height)
                 let opts = recipe.generation
                 let request = InferenceRequest(operation: generating ? "generate" : "enhance", modelID: model.id, modelPath: model.path, modelVariant: model.variant,
                                             configPath: model.configPath, inputPath: input?.path, outputPath: raw.path, prompt: opts.prompt,
@@ -463,7 +525,27 @@ final class StudioStore: ObservableObject {
                 let output = recipe.directory.appendingPathComponent(name).appendingPathExtension(recipe.format.fileExtension)
                 let alreadyPublished = try recover(output, job: job, index: i, request: request)
                 if !alreadyPublished {
+                    if stagePaths == nil {
+                        var stageModels: [StudioModel] = []
+                        for expected in [model] + adapters {
+                            stageModels.append(try await models.resolve(expected))
+                        }
+                        stagePaths = try await verifiedPaths(for: stageModels)
+                        if generating, model.variant == GenerationProfile.sdxl.rawValue,
+                           opts.predictionType == nil || opts.zeroTerminalSNR == nil {
+                            schedulerDefaults = try await ModelInspector.shared.legacySchedulerDefaults(for: stageModels[0])
+                        }
+                    }
+                    guard let paths = stagePaths, let modelURL = paths[model.id] else { throw StudioError("Missing verified model.") }
                     var inferenceRequest = request
+                    inferenceRequest.modelPath = modelURL.path
+                    inferenceRequest.configPath = nil
+                    inferenceRequest.predictionType = opts.predictionType ?? schedulerDefaults.predictionType
+                    inferenceRequest.zeroTerminalSNR = opts.zeroTerminalSNR ?? schedulerDefaults.zeroTerminalSNR
+                    inferenceRequest.loras = try zip(adapters, opts.loras).map { adapter, choice in
+                        guard let url = paths[adapter.id] else { throw StudioError("Missing verified LoRA.") }
+                        return AdapterWeight(id: adapter.id, path: url.path, scale: choice.scale)
+                    }
                     if generating, let reference = recipe.reference {
                         if referenceCopy == nil {
                             let copy = scratch.appendingPathComponent(UUID().uuidString).appendingPathExtension(reference.url.pathExtension)
@@ -471,6 +553,7 @@ final class StudioStore: ObservableObject {
                                 try reference.validate()
                                 try FileManager.default.copyItem(at: reference.url.resolvingSymlinksInPath(), to: copy)
                                 try reference.validate()
+                                _ = try ImageFiles.dimensions(of: copy)
                             }.value
                             referenceCopy = copy
                         }
@@ -482,11 +565,9 @@ final class StudioStore: ObservableObject {
                     let dimensions = try ImageFiles.dimensions(of: raw)
                     guard dimensions == (width,height) else { throw StudioError("The model returned \(dimensions.0) × \(dimensions.1), expected \(width) × \(height).") }
                     let sample = worker.measuredPeakBytes.map { ModelMemorySample(width: width, height: height, peak: $0) }
-                    var publishedRequest = request
-                    publishedRequest.outputPath = output.path
-                    let receipt = OutputReceipt(jobID: job.id, index: i, model: model, request: publishedRequest, original: generating ? recipe.reference?.url : (results[i]?.original ?? input),
-                                                loras: recipe.loras, generatedBy: !generating ? recipe.generator : nil, exportFormat: recipe.format, jpegQuality: recipe.jpegQuality,
-                                                runtime: worker.runtimeIdentity, memory: sample, processingSize: worker.processingSize)
+                    let receipt = OutputReceipt(jobID: job.id, index: i, model: .init(id: model.id),
+                                                request: .init(operation: request.operation, seed: seed, width: width, height: height),
+                                                memory: sample, processingSize: worker.processingSize)
                     let data = try JSONEncoder.pretty.encode(receipt)
                     let metadataSource = generating ? nil : (results[i]?.original ?? input)
                     try await Task.detached(priority: .utility) {
@@ -519,8 +600,7 @@ final class StudioStore: ObservableObject {
         let receiptURL = output.appendingPathExtension("json")
         let hasFile = fm.fileExists(atPath: output.path)
         guard hasFile || fm.fileExists(atPath: receiptURL.path) else { return false }
-        guard let data = try? Data(contentsOf: receiptURL),
-              let receipt = try? JSONDecoder().decode(OutputReceipt.self, from: data),
+        guard let receipt = try? OutputReceipt.read(receiptURL),
               receipt.jobID == job.id, receipt.index == index, receipt.model.id == request.modelID,
               receipt.request.operation == request.operation, receipt.request.seed == request.seed,
               receipt.request.width == request.width, receipt.request.height == request.height else {
@@ -533,7 +613,7 @@ final class StudioStore: ObservableObject {
             return true
         }
         // Only the receipt for this exact job/item was published before interruption.
-        try fm.removeItem(at: receiptURL)
+        guard unlink(receiptURL.path) == 0 else { throw StudioError("Could not remove the incomplete output receipt.") }
         return false
     }
 
@@ -567,19 +647,35 @@ final class StudioStore: ObservableObject {
 
 }
 
+// Keep the nested keys compatible with legacy receipts; prompts and local paths are never required for recovery.
 private struct OutputReceipt: Codable {
+    struct Model: Codable { let id: String }
+    struct Request: Codable {
+        let operation: String
+        let seed: Int
+        let width: Int
+        let height: Int
+    }
     let jobID: UUID
     let index: Int
-    let model: StudioModel
-    var request: InferenceRequest
-    let original: URL?
-    let loras: [StudioModel]
-    let generatedBy: StudioModel?
-    var exportFormat: ExportFormat
-    var jpegQuality: Double
-    let runtime: String
+    let model: Model
+    let request: Request
     let memory: ModelMemorySample?
     let processingSize: ModelImageSize?
+
+    static func read(_ url: URL) throws -> Self {
+        let fd = open(url.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        guard fd >= 0 else { throw StudioError("Cannot open the output receipt.") }
+        let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var info = stat()
+        let limit = 4 * 1024 * 1024
+        guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_size <= limit,
+              let data = try handle.read(upToCount: limit + 1), data.count <= limit else {
+            throw StudioError("Expected a regular output receipt of at most 4 MiB.")
+        }
+        return try JSONDecoder().decode(Self.self, from: data)
+    }
 }
 
 extension JSONEncoder {
