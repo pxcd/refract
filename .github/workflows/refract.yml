@@ -25,9 +25,9 @@ jobs:
         run: swift build --disable-sandbox -c release --arch arm64
 
   release:
-    name: Package and publish
+    name: Package and publish private build
     needs: verify
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event.repository.private
     runs-on: xcode-27
     timeout-minutes: 35
     concurrency:

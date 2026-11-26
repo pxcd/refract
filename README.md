@@ -34,10 +34,10 @@ The Swift app calls Diffusers/PyTorch MPS for SDXL and MLX-Gen/MLX for SeedVR2 o
 - [RunDiffusion Juggernaut XI](https://huggingface.co/RunDiffusion/Juggernaut-XI-v11)
 - [ByteDance SeedVR2](https://github.com/ByteDance-Seed/SeedVR)
 
-## CI and private releases
+## CI and releases
 
 GitHub Actions builds and tests pull requests and pushes to `main` on the Apple Silicon Xcode 27 runner. Hardware acceptance tests use separately installed model weights and run locally.
 
-After a passing build on `main`, GitHub Actions publishes a private release whenever `CFBundleShortVersionString` in `Resources/Info.plist` advances. It creates the version tag, packages and verifies the ad-hoc-signed app, and attaches the ZIP, SHA-256 checksum and build receipt. Model weights stay in the user’s model library.
+In a private repository, after a passing build on `main`, GitHub Actions publishes a release whenever `CFBundleShortVersionString` in `Resources/Info.plist` advances. It creates the version tag, packages and verifies the ad-hoc-signed app, and attaches the ZIP, SHA-256 checksum and build receipt. Model weights stay in the user’s model library. Public checkouts can build the app locally using the commands above.
 
 A second workflow squash-merges clean, passing PRs from trusted same-repository contributors when all changed paths qualify for automatic merging. Changes to the UI, visual app resources, workflows or other unclassified files remain open for manual review. Version bumps in the bundle metadata are eligible for automatic merging. A successful automated merge dispatches the main build and release workflow.
