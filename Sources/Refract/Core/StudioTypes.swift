@@ -123,6 +123,7 @@ struct StudioJob: Codable, Identifiable {
     var results: [StudioResult] = []
     var trashedResultIndices: Set<Int>?
     var hiddenFilmstripResults: Set<UUID>?
+    var generationGroupID: UUID?
 
     var filmstripResults: [StudioResult] {
         results.filter { hiddenFilmstripResults?.contains($0.id) != true }

@@ -27,6 +27,7 @@ struct RefractApp: App {
                 .environmentObject(modelNavigation)
         } defaultValue: { "main" }
         .defaultSize(width: 1180, height: 800)
+        .windowToolbarStyle(UnifiedCompactWindowToolbarStyle(showsTitle: false))
         .handlesExternalEvents(matching: ["file:"])
         .commands { OpenImagesCommands(fileSelection: fileSelection) }
         Window("Models", id: "models") {

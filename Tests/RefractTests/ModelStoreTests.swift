@@ -20,12 +20,16 @@ final class ModelStoreTests: XCTestCase {
         try data.write(to: url)
     }
 
-    func testWrongKindImportAndExternalRemovalPreserveWeights() async throws {
+    func testWrongKindImportAndMoveExternalWeightsToTrash() async throws {
         let root = try temporaryDirectory()
         let source = root.appendingPathComponent("portrait.safetensors")
         try writeAdapter(to: source)
         let expected = try Data(contentsOf: source)
-        let store = ModelStore(directory: root, trash: { _ in XCTFail("External model went to Trash"); return nil })
+        let trash = root.appendingPathComponent("isolated-trash.safetensors")
+        let store = ModelStore(directory: root, trash: { path in
+            try FileManager.default.moveItem(at: path, to: trash)
+            return trash
+        })
         for kind in [ModelKind.generation, .enhancement] {
             do {
                 try await store.importModel(at: source, kind: kind)
@@ -38,9 +42,42 @@ final class ModelStoreTests: XCTestCase {
         XCTAssertEqual(adapter.path, source.path)
         XCTAssertFalse(adapter.managed)
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.modelDirectory.path))
-        try store.remove(adapter)
-        XCTAssertEqual(try Data(contentsOf: source), expected)
+        let removal = store.removal(for: adapter)
+        XCTAssertFalse(removal.followsLink)
+        try store.remove(removal)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.path))
+        XCTAssertEqual(try Data(contentsOf: trash), expected)
         XCTAssertTrue(ModelStore(directory: root).models.isEmpty)
+    }
+
+    func testLinkedModelTrashUsesConfirmedTargetAndRejectsRetargeting() async throws {
+        let root = try temporaryDirectory()
+        let fm = FileManager.default
+        let source = root.appendingPathComponent("original.safetensors")
+        let alternate = root.appendingPathComponent("alternate.safetensors")
+        let link = root.appendingPathComponent("linked.safetensors")
+        let trash = root.appendingPathComponent("isolated-trash.safetensors")
+        try writeAdapter(to: source)
+        try writeAdapter(to: alternate)
+        try fm.createSymbolicLink(at: link, withDestinationURL: source)
+        let store = ModelStore(directory: root, trash: { path in
+            try fm.moveItem(at: path, to: trash)
+            return trash
+        })
+        let imported = try await store.importModel(at: link)
+        let removal = store.removal(for: imported)
+        XCTAssertTrue(removal.followsLink)
+        XCTAssertEqual(removal.target, source.resolvingSymlinksInPath())
+        try fm.removeItem(at: link)
+        try fm.createSymbolicLink(at: link, withDestinationURL: alternate)
+        XCTAssertThrowsError(try store.remove(removal))
+        XCTAssertTrue(fm.fileExists(atPath: alternate.path))
+        try fm.removeItem(at: link)
+        try fm.createSymbolicLink(at: link, withDestinationURL: source)
+        try store.remove(removal)
+        XCTAssertFalse(fm.fileExists(atPath: source.path))
+        XCTAssertTrue(fm.fileExists(atPath: trash.path))
+        XCTAssertEqual(try fm.destinationOfSymbolicLink(atPath: link.path), source.path)
     }
 
     func testManagedCheckpointRemovalChecksOwnershipAndMovesWholePackage() throws {
@@ -64,15 +101,15 @@ final class ModelStoreTests: XCTestCase {
         })
         let marker = package.appendingPathComponent(".refract-managed-model")
         try "unrelated".write(to: marker, atomically: true, encoding: .utf8)
-        XCTAssertThrowsError(try store.remove(model))
+        XCTAssertThrowsError(try store.remove(store.removal(for: model)))
         try entry.provenanceID.write(to: marker, atomically: true, encoding: .utf8)
         let foreign = package.appendingPathComponent("my-original.png")
         try Data([42]).write(to: foreign)
-        XCTAssertThrowsError(try store.remove(model))
+        XCTAssertThrowsError(try store.remove(store.removal(for: model)))
         XCTAssertEqual(try Data(contentsOf: foreign), Data([42]))
         XCTAssertEqual(store.models, [model])
         try FileManager.default.removeItem(at: foreign)
-        try store.remove(model)
+        try store.remove(store.removal(for: model))
         XCTAssertTrue(FileManager.default.fileExists(atPath: trash.appendingPathComponent(file.lastPathComponent).path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: package.path))
         XCTAssertTrue(ModelStore(directory: root).models.isEmpty)

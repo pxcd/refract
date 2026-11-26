@@ -98,26 +98,67 @@ final class ModelStore: ObservableObject {
         return current
     }
 
-    func remove(_ model: StudioModel) throws {
-        guard let record = models.first(where: { $0.id == model.id }) else { return }
+    struct ModelRemoval {
+        let model: StudioModel
+        let target: URL
+        let followsLink: Bool
+    }
+
+    func removal(for model: StudioModel) -> ModelRemoval {
+        let url = URL(fileURLWithPath: model.path)
+        let entry = Self.catalog.first { $0.identity == model.id }
+        if model.managed {
+            let package = entry?.checkpointFile != nil ? url.deletingLastPathComponent() : url
+            return ModelRemoval(model: model, target: package, followsLink: false)
+        }
+        let target = url.resolvingSymlinksInPath()
+        let registered = url.deletingLastPathComponent().resolvingSymlinksInPath().appendingPathComponent(url.lastPathComponent)
+        return ModelRemoval(model: model, target: target, followsLink: registered.path != target.path)
+    }
+
+    func remove(_ removal: ModelRemoval) throws {
+        if let readError { throw ModelError(readError) }
+        let record = removal.model
+        guard models.contains(record), self.removal(for: record).target == removal.target else {
+            throw ModelError("The model location changed. Open the confirmation again.")
+        }
+        let target = removal.target
         let entry = Self.catalog.first { $0.identity == record.id }
-        if let entry, transfers[entry.id] != nil { throw ModelError("Finish or cancel the model download before removing its registration.") }
+        if let entry, transfers[entry.id] != nil { throw ModelError("Finish or cancel the model download first.") }
         let remaining = models.filter { $0.id != record.id }
         let dismissed = dismissedPaths.union([record.path])
-        let modelURL = URL(fileURLWithPath: record.path)
-        let directory = entry?.checkpointFile != nil ? modelURL.deletingLastPathComponent() : modelURL
-        guard record.managed, fm.fileExists(atPath: directory.path) else {
+        var trashed: URL?
+        if fm.fileExists(atPath: target.path) {
+            if record.managed {
+                guard let entry,
+                      target.lastPathComponent == entry.id,
+                      target.deletingLastPathComponent().lastPathComponent == "Refract Packages",
+                      (try? target.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
+                      (try? String(contentsOf: target.appendingPathComponent(Self.marker), encoding: .utf8)) == entry.provenanceID else {
+                    throw ModelError("The package ownership record does not match.")
+                }
+                try verifyTrashContents(target, entry: entry)
+            } else if let entry, entry.checkpointFile == nil {
+                try verifyTrashContents(target, entry: entry)
+            } else {
+                guard try target.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                    throw ModelError("The original model path no longer points to a file.")
+                }
+            }
+            trashed = try trash(target)
+        }
+        do {
             try persist(models: remaining, directory: modelDirectory, dismissed: dismissed)
             if let entry { downloads[entry.id] = nil }
-            return
+        } catch {
+            if let trashed, !fm.fileExists(atPath: target.path) {
+                try fm.moveItem(at: trashed, to: target)
+            }
+            throw error
         }
-        guard let entry,
-              directory.lastPathComponent == entry.id,
-              directory.deletingLastPathComponent().lastPathComponent == "Refract Packages",
-              (try? directory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
-              (try? String(contentsOf: directory.appendingPathComponent(Self.marker), encoding: .utf8)) == entry.provenanceID else {
-            throw ModelError("The package ownership record does not match. The files were left in place.")
-        }
+    }
+
+    private func verifyTrashContents(_ directory: URL, entry: CatalogModel) throws {
         var folders = Set<String>()
         for file in entry.files {
             var parent = (file.path as NSString).deletingLastPathComponent
@@ -129,16 +170,6 @@ final class ModelStore: ObservableObject {
         guard let children = fm.enumerator(atPath: directory.path),
               children.allObjects.allSatisfy({ ($0 as? String).map(permitted.contains) == true }) else {
             throw ModelError("This package contains additional files. Move those files out before removing it.")
-        }
-        let trashed = try trash(directory)
-        do {
-            try persist(models: remaining, directory: modelDirectory, dismissed: dismissed)
-            downloads[entry.id] = nil
-        } catch {
-            if let trashed, !fm.fileExists(atPath: directory.path) {
-                try fm.moveItem(at: trashed, to: directory)
-            }
-            throw error
         }
     }
 
