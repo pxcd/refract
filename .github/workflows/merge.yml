@@ -39,7 +39,8 @@ jobs:
           if ! jq -e --argjson count "$count" '
             def eligible:
               test("^(Sources/Refract/(Core|Models)/|Worker/|Tests/|scripts/)")
-              or . == "README.md" or . == ".gitignore" or . == "Package.swift";
+              or . == "README.md" or . == ".gitignore" or . == "Package.swift"
+              or . == "Resources/Info.plist";
             add | length == $count and length > 0 and
               all(.[]; (.filename | eligible) and ((.previous_filename // .filename) | eligible))
           ' <<< "$files" > /dev/null; then

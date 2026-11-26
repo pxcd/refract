@@ -40,4 +40,4 @@ GitHub Actions builds and tests pull requests and pushes to `main` on the Apple 
 
 After a passing build on `main`, GitHub Actions publishes a private release whenever `CFBundleShortVersionString` in `Resources/Info.plist` advances. It creates the version tag, packages and verifies the ad-hoc-signed app, and attaches the ZIP, SHA-256 checksum and build receipt. Model weights stay in the user’s model library.
 
-A second workflow squash-merges clean, passing PRs from trusted same-repository contributors when all changed paths qualify for automatic merging. Changes to the UI, app resources, workflows or other unclassified files remain open for manual review. A successful automated merge dispatches the main build and release workflow.
+A second workflow squash-merges clean, passing PRs from trusted same-repository contributors when all changed paths qualify for automatic merging. Changes to the UI, visual app resources, workflows or other unclassified files remain open for manual review. Version bumps in the bundle metadata are eligible for automatic merging. A successful automated merge dispatches the main build and release workflow.
