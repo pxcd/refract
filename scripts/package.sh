@@ -19,7 +19,9 @@ cp "$products/Refract" "$app/Contents/MacOS/Refract"
 # Package builds may run from a detached process without an inherited standard input.
 "$app/Contents/Resources/runtime/bin/python3.12" -I -B -c 'from importlib.metadata import version; from pathlib import Path; import sys; Path(sys.argv[1]).write_text("\n".join(f"{p}=={version(p)}" for p in ("diffusers","torch","mlx","mlx-metal","mlx-gen","transformers","peft","safetensors","Pillow"))+"\n")' "$app/Contents/Resources/runtime-versions.txt" </dev/null
 cat scripts/runtime-macos27.sha256 >> "$app/Contents/Resources/runtime-versions.txt"
-(cd "$app/Contents/Resources" && shasum -a 256 Worker/worker.py >> runtime-versions.txt)
+(cd "$app/Contents/Resources" && find Worker -type f | LC_ALL=C sort | while IFS= read -r file; do
+    shasum -a 256 "$file"
+done >> runtime-versions.txt)
 "$runtime/bin/python3.12" -I -B scripts/runtime-audit.py "$app" </dev/null
 /usr/bin/codesign --force --sign - --identifier studio.refract.mac "$app"
 /usr/bin/codesign --verify --deep --strict "$app"

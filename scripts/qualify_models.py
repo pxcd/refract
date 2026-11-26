@@ -145,6 +145,7 @@ class Suite:
         self.data = {}
         configs = self.worker.parent/'configs'/'sdxl'
         self.identity = dict(worker=digest_file(self.worker), python=sys.version,
+                             adapters={p.name: digest_file(p) for p in sorted((self.worker.parent/'refract_models').glob('*.py'))},
                              sdxl_config=signature([(p.relative_to(configs).as_posix(), digest_file(p))
                                                    for p in sorted(configs.rglob('*')) if p.is_file()]),
                              mlx_wheels={p: [line[5:].strip() for line in distribution(p).read_text('WHEEL').splitlines()

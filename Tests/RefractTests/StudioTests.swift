@@ -13,10 +13,10 @@ private func writeImage(_ destination: URL, width: Int, height: Int) throws {
 }
 
 @MainActor private final class TestClient: InferenceClient {
-    var requests: [WorkerRequest] = []
+    var requests: [InferenceRequest] = []
     var failAt: Int?
-    var onRender: ((WorkerRequest) throws -> Void)?
-    func render(_ request: WorkerRequest, progress: @escaping (Double?, String) -> Void) async throws {
+    var onRender: ((InferenceRequest) throws -> Void)?
+    func render(_ request: InferenceRequest, progress: @escaping (Double?, String) -> Void) async throws {
         requests.append(request)
         try onRender?(request)
         if failAt == requests.count { throw StudioError("Intentional test interruption") }
@@ -60,7 +60,10 @@ final class StudioTests: XCTestCase {
     @MainActor func testSnapshotPartialFailureRetryAndPreserveSource() async throws {
         let root = try temporary(), models = ModelStore(directory:root), client = TestClient()
         let source = try checkpoint(root)
-        try await models.importModel(at:source,kind:.generation)
+        let checkpoint = try await models.importModel(at: source)
+        XCTAssertEqual(checkpoint.kind, .generation)
+        XCTAssertEqual(checkpoint.path, source.path)
+        XCTAssertFalse(checkpoint.managed)
         let defaults = isolatedDefaults()
         let studio = StudioStore(models: models, worker: client, directory: root, defaults: defaults)
         studio.outputDirectory = root.appendingPathComponent("outputs")
@@ -127,6 +130,70 @@ final class StudioTests: XCTestCase {
         XCTAssertEqual(secondClient.requests.count,1)
     }
 
+    @MainActor func testTrashGeneratedResultRollsBackAndStaysTrashedOnRetry() async throws {
+        let root = try temporary(), models = ModelStore(directory: root)
+        try await models.importModel(at: checkpoint(root))
+        let client = TestClient()
+        client.failAt = 2
+        let defaults = isolatedDefaults()
+        let store = StudioStore(models: models, worker: client, directory: root, defaults: defaults)
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.generation.prompt = "Trash the first image"
+        store.generation.width = 64
+        store.generation.height = 64
+        store.generation.seed = 51
+        store.generation.count = 2
+        store.generate()
+        try await wait(store)
+        let job = try XCTUnwrap(store.jobs.first)
+        let discarded = try XCTUnwrap(job.results.first)
+        let originalReceipt = discarded.original.appendingPathExtension("json")
+        XCTAssertThrowsError(try store.trashGeneratedResult(discarded.id) { _ in throw StudioError("Trash unavailable") })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: discarded.original.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: originalReceipt.path))
+        XCTAssertEqual(store.jobs.first?.results.count, 1)
+        let trash = root.appendingPathComponent("test-trash")
+        try store.trashGeneratedResult(discarded.id) { try FileManager.default.moveItem(at: $0, to: trash) }
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: trash.path)),
+                       [discarded.original.lastPathComponent, originalReceipt.lastPathComponent])
+        let retryClient = TestClient()
+        let reopened = StudioStore(models: models, worker: retryClient, directory: root, defaults: defaults)
+        reopened.retry(job.id)
+        try await wait(reopened)
+        XCTAssertEqual(retryClient.requests.map(\.seed), [52])
+        XCTAssertEqual(reopened.jobs.first?.results.map(\.seed), [52])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: discarded.original.path))
+    }
+
+    @MainActor func testClearFilmstripKeepsFilesAndJobHistoryAcrossRelaunch() async throws {
+        let root = try temporary(), models = ModelStore(directory: root)
+        try await models.importModel(at: checkpoint(root))
+        let defaults = isolatedDefaults()
+        let store = StudioStore(models: models, worker: TestClient(), directory: root, defaults: defaults)
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.generation.prompt = "Keep the source image"
+        store.generation.width = 64
+        store.generation.height = 64
+        store.generate()
+        try await wait(store)
+        let first = try XCTUnwrap(store.jobs.first?.results.first)
+        let bytes = try Data(contentsOf: first.original)
+        store.clearFilmstrip(generated: true)
+        XCTAssertTrue(try XCTUnwrap(store.jobs.first).filmstripResults.isEmpty)
+        XCTAssertNil(store.selectedResult)
+        let reopened = StudioStore(models: models, worker: TestClient(), directory: root, defaults: defaults)
+        XCTAssertEqual(reopened.jobs.first?.results, [first])
+        XCTAssertTrue(try XCTUnwrap(reopened.jobs.first).filmstripResults.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: first.original), bytes)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: first.original.appendingPathExtension("json").path))
+
+        reopened.generation = store.generation
+        reopened.generate()
+        try await wait(reopened)
+        XCTAssertEqual(reopened.jobs.flatMap(\.filmstripResults).count, 1)
+        XCTAssertEqual(reopened.jobs.flatMap(\.results).count, 2)
+    }
+
     @MainActor func testUnreadableQueueSurvivesQuit() throws {
         let root = try temporary(), file = root.appendingPathComponent("jobs.json"), damaged = Data("damaged".utf8)
         try damaged.write(to:file)
@@ -157,12 +224,15 @@ final class StudioTests: XCTestCase {
         let root = try temporary(), catalog = ModelStore(directory: root), client = TestClient()
         try await catalog.importModel(at: checkpoint(root), kind: .generation)
         let original = root.appendingPathComponent("reference.png")
-        try writeImage(original, width: 64, height: 64)
+        try writeImage(original, width: 81, height: 65)
         let bytes = try Data(contentsOf: original)
         client.onRender = { request in
             let workerInput = URL(fileURLWithPath: try XCTUnwrap(request.inputPath))
             XCTAssertNotEqual(workerInput, original)
             XCTAssertEqual(try Data(contentsOf: workerInput), bytes)
+            XCTAssertEqual(request.width, 81)
+            XCTAssertEqual(request.height, 65)
+            XCTAssertEqual(request.preserveReferenceSize, true)
             if client.requests.count == 1 { try writeImage(original, width: 96, height: 64) }
         }
         defer { client.onRender = nil }
@@ -170,6 +240,7 @@ final class StudioTests: XCTestCase {
         studio.outputDirectory = root.appendingPathComponent("images")
         studio.generation.prompt = "Test the same reference twice"
         studio.generation.reference = original
+        studio.generation.preserveReferenceSize = true
         studio.generation.count = 2
         studio.generate()
         try await wait(studio)

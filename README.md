@@ -34,6 +34,14 @@ The Swift app calls Diffusers/PyTorch MPS for SDXL and MLX-Gen/MLX for SeedVR2 o
 - [RunDiffusion Juggernaut XI](https://huggingface.co/RunDiffusion/Juggernaut-XI-v11)
 - [ByteDance SeedVR2](https://github.com/ByteDance-Seed/SeedVR)
 
+## Adding model support
+
+The Swift queue calls `InferenceClient` with an `InferenceRequest`. The app currently injects `WorkerClient`, which sends the request to the bundled Python process. A future native client can implement the same protocol and be selected at the app boundary.
+
+Python routes requests by operation and model variant through `Worker/refract_models/__init__.py`. Register built-in code there. An adapter declares its variants, validates its local model in `prepare`, and returns the configuration identity and a lazy model loader. Its loaded model implements `run(request, progress)` and returns a Pillow image and optional result metadata.
+
+For a curated download, add a matching variant and a pinned file manifest in `ModelCatalog.swift`. Set `checkpointFilename` for a single-file checkpoint. A folder package uses its revision and complete file manifest as its identity. Check supported controls, offline inference, cancellation and any generation-to-enhancement handoff before enabling a new family.
+
 ## CI and private releases
 
 GitHub Actions builds and tests pull requests and pushes to `main` on the Apple Silicon Xcode 27 runner. Hardware acceptance tests use separately installed model weights and run locally.

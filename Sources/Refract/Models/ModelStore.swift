@@ -63,9 +63,11 @@ final class ModelStore: ObservableObject {
         try persist(models: models, directory: url.standardizedFileURL, dismissed: dismissedPaths)
     }
 
-    func importModel(at url: URL, kind: ModelKind) async throws {
+    @discardableResult
+    func importModel(at url: URL, kind: ModelKind? = nil) async throws -> StudioModel {
         let model = try await inspector.inspect(at: url.standardizedFileURL, kind: kind)
         try register(model)
+        return models.first(where: { $0.id == model.id }) ?? model
     }
 
     private func register(_ model: StudioModel) throws {
@@ -103,7 +105,7 @@ final class ModelStore: ObservableObject {
         let remaining = models.filter { $0.id != record.id }
         let dismissed = dismissedPaths.union([record.path])
         let modelURL = URL(fileURLWithPath: record.path)
-        let directory = record.kind == .generation ? modelURL.deletingLastPathComponent() : modelURL
+        let directory = entry?.checkpointFile != nil ? modelURL.deletingLastPathComponent() : modelURL
         guard record.managed, fm.fileExists(atPath: directory.path) else {
             try persist(models: remaining, directory: modelDirectory, dismissed: dismissed)
             if let entry { downloads[entry.id] = nil }
@@ -116,7 +118,13 @@ final class ModelStore: ObservableObject {
               (try? String(contentsOf: directory.appendingPathComponent(Self.marker), encoding: .utf8)) == entry.provenanceID else {
             throw ModelError("The package ownership record does not match. The files were left in place.")
         }
-        let folders = Set(entry.files.map { ($0.path as NSString).deletingLastPathComponent }).subtracting([""])
+        var folders = Set<String>()
+        for file in entry.files {
+            var parent = (file.path as NSString).deletingLastPathComponent
+            while !parent.isEmpty && folders.insert(parent).inserted {
+                parent = (parent as NSString).deletingLastPathComponent
+            }
+        }
         let permitted = Set(entry.files.map(\.path) + [Self.marker, ".DS_Store"]).union(folders).union(folders.map { $0 + "/.DS_Store" })
         guard let children = fm.enumerator(atPath: directory.path),
               children.allObjects.allSatisfy({ ($0 as? String).map(permitted.contains) == true }) else {

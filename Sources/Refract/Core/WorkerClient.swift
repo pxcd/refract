@@ -22,7 +22,7 @@ final class WorkerClient: InferenceClient {
     private var onProgress: ((Double?, String) -> Void)?
     private var recentError = ""
 
-    func render(_ request: WorkerRequest, progress: @escaping (Double?, String) -> Void) async throws {
+    func render(_ request: InferenceRequest, progress: @escaping (Double?, String) -> Void) async throws {
         let newRoute = [request.operation, request.modelID ?? "", request.modelPath, request.modelVariant, request.configPath ?? ""]
         if process?.isRunning != true || route != newRoute {
             stop()
