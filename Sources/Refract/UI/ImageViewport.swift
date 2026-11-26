@@ -87,22 +87,30 @@ struct ImageViewport: View {
                     ProgressView()
                 }
             }
-            Divider()
             HStack {
                 if let canvas = loaded?.enhanced ?? loaded?.original {
                     Text("\(Int(canvas.pixels.width)) × \(Int(canvas.pixels.height))")
                         .monospacedDigit().foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                Spacer()
-                Button("Fit") { zoom = nil }
-                    .accessibilityLabel("Fit image to window")
-                Button("100%") { zoom = 1 }
-                    .help("One output pixel per display pixel")
-                if let zoom, abs(zoom - 1) > 0.005 {
-                    Text("\(Int(zoom * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                HStack {
+                    Button("Fit") { zoom = nil }
+                        .accessibilityLabel("Fit image to window")
+                    Button("100%") { zoom = 1 }
+                        .help("One output pixel per display pixel")
+                    if let zoom, abs(zoom - 1) > 0.005 {
+                        Text("\(Int(zoom * 100))%").monospacedDigit().foregroundStyle(.secondary)
+                    }
                 }
+                .fixedSize(horizontal: true, vertical: false)
+                .layoutPriority(1)
             }
-            .font(.caption).buttonStyle(.borderless).padding(.horizontal, 12).frame(height: 32)
+            .font(.caption)
+            .buttonStyle(.borderless)
+            .padding(.leading, 12)
+            .padding(.trailing, 18)
+            .frame(height: 32)
         }
         .task(id: ImagePair(original: original, enhanced: enhanced)) {
             let pair = ImagePair(original: original, enhanced: enhanced)

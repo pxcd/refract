@@ -105,7 +105,7 @@ private extension ExportFormat {
     }
 }
 
-enum Workspace { case generate, enhance }
+enum Workspace: Hashable { case generate, enhance }
 
 @MainActor final class StudioFileSelection: ObservableObject {
     @Published var workspace: Workspace = .generate
@@ -136,6 +136,7 @@ struct StudioView: View {
     @State private var generationResult: StudioResult?
     @State private var enhancementResult: StudioResult?
     @State private var targetingCanvas = false
+    @State private var hiddenSourcePreviews: Set<Workspace> = []
 
     private var activeResult: StudioResult? { workspace == .generate ? generationResult : enhancementResult }
 
@@ -150,6 +151,7 @@ struct StudioView: View {
                     .accessibilityHidden(true)
                 inspectorPane
                     .frame(width: 320)
+                    .clipped()
             }
         }
         .frame(minWidth: 760, minHeight: 490)
@@ -188,11 +190,18 @@ struct StudioView: View {
                 enhancementResult = studio.jobs.first(where: { $0.recipe.generator == nil && !$0.filmstripResults.isEmpty })?.filmstripResults.last
             }
         }
-        .onChange(of: studio.generation.reference) { _, _ in generationResult = nil }
-        .onChange(of: fileSelection.inputs) { _, _ in enhancementResult = nil }
+        .onChange(of: studio.generation.reference) { _, _ in
+            generationResult = nil
+            hiddenSourcePreviews.remove(.generate)
+        }
+        .onChange(of: fileSelection.inputs) { _, _ in
+            enhancementResult = nil
+            hiddenSourcePreviews.remove(.enhance)
+        }
         .onChange(of: fileSelection.openRequest) { _, _ in
             showQueue = false
             showInspector = true
+            hiddenSourcePreviews.remove(.enhance)
             enhancementResult = nil
             studio.selectedResult = nil
         }
@@ -221,9 +230,11 @@ struct StudioView: View {
             .dropDestination(for: URL.self) { urls, _ in
                 if workspace == .enhance {
                     for url in urls where !inputs.contains(url) { fileSelection.inputs.append(url) }
+                    hiddenSourcePreviews.remove(.enhance)
                     enhancementResult = nil
                 } else if let image = urls.first(where: isImage) {
                     studio.generation.reference = image
+                    hiddenSourcePreviews.remove(.generate)
                     generationResult = nil
                 } else { return false }
                 studio.selectedResult = nil
@@ -244,7 +255,6 @@ struct StudioView: View {
         .controlSize(.small)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
-                Divider()
                 if workspace == .generate {
                     generateButton
                 } else {
@@ -305,9 +315,9 @@ struct StudioView: View {
             if let result = activeResult {
                 ImageViewport(original: result.original, enhanced: result.enhanced)
                     .frame(maxHeight: .infinity)
-            } else if workspace == .enhance, let first = inputs.first, isImage(first) {
+            } else if workspace == .enhance, !hiddenSourcePreviews.contains(.enhance), let first = inputs.first, isImage(first) {
                 ImageViewport(original: first).frame(maxHeight: .infinity)
-            } else if workspace == .generate, let reference = studio.generation.reference {
+            } else if workspace == .generate, !hiddenSourcePreviews.contains(.generate), let reference = studio.generation.reference {
                 ImageViewport(original: reference).frame(maxHeight: .infinity)
             } else {
                 ContentUnavailableView(workspace == .generate ? "Image Preview" : "Compare Images",
@@ -316,30 +326,38 @@ struct StudioView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             if let running = studio.jobs.first(where: { $0.status == .running }) {
-                Divider()
                 Button { showQueue = true } label: {
-                    HStack {
-                        if let progress = running.progress {
-                            ProgressView(value: progress).progressViewStyle(.linear).frame(width: 58)
-                        } else { ProgressView().controlSize(.small) }
-                        if let position = studio.generationBatchPosition(for: running) {
-                            Text("Batch \(position.current) of \(position.total)")
-                                .fontWeight(.medium).monospacedDigit()
-                                .fixedSize()
-                            Text("·").foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            if let position = studio.generationBatchPosition(for: running) {
+                                Text("Batch \(position.current) of \(position.total)")
+                                    .fontWeight(.medium).monospacedDigit()
+                                    .fixedSize()
+                                Text("·").foregroundStyle(.secondary)
+                            }
+                            Text(running.message.isEmpty ? running.title : running.message).lineLimit(1)
+                            Spacer()
+                            Text("Queue").foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right").font(.caption)
                         }
-                        Text(running.message.isEmpty ? running.title : running.message).lineLimit(1)
-                        Spacer()
-                        Text("Queue").foregroundStyle(.secondary)
-                        Image(systemName: "chevron.right").font(.caption)
+                        Group {
+                            if let progress = running.progress {
+                                ProgressView(value: progress)
+                            } else {
+                                ProgressView()
+                            }
+                        }
+                        .progressViewStyle(.linear)
+                        .accessibilityLabel("Job progress")
                     }
-                    .padding(.horizontal, 14).frame(height: 34).contentShape(Rectangle())
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
             let recent = studio.jobs.filter { ($0.recipe.generator != nil) == (workspace == .generate) && !$0.filmstripResults.isEmpty }
             if !recent.isEmpty {
-                Divider()
                 HStack(spacing: 0) {
                     ScrollView(.horizontal) {
                         LazyHStack(spacing: 6) {
@@ -353,12 +371,13 @@ struct StudioView: View {
                     Button("Clear") {
                         let generated = workspace == .generate
                         if generated { generationResult = nil } else { enhancementResult = nil }
+                        hiddenSourcePreviews.insert(workspace)
                         studio.clearFilmstrip(generated: generated)
                     }
                     .controlSize(.small)
                     .padding(.horizontal, 12)
                     .accessibilityLabel("Clear filmstrip")
-                    .help("Clear thumbnails and keep their files and job history")
+                    .help("Clear the preview and thumbnails while keeping their files and job history")
                 }
                 .frame(height: 70)
             }
@@ -444,20 +463,20 @@ struct ModelPicker: View {
     let title: String
     let kind: ModelKind
     @Binding var id: String
+    var showsTitle = true
 
     var body: some View {
         let choices = models.models.filter { $0.kind == kind }
         VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            HStack {
-                Picker(title, selection: $id) {
-                    if !choices.contains(where: { $0.id == id }) { Text("Choose a model").tag(id) }
-                    ForEach(choices, id: \.id) { Text($0.name).tag($0.id) }
-                }.labelsHidden().frame(maxWidth: .infinity)
-                OpenModelManager(kind: kind) { Image(systemName: "square.3.layers.3d") }
-                    .buttonStyle(.borderless)
-                    .accessibilityLabel("Manage models").help("Manage models")
+            if showsTitle {
+                Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             }
+            Picker(title, selection: $id) {
+                if !choices.contains(where: { $0.id == id }) { Text("Choose a model").tag(id) }
+                ForEach(choices, id: \.id) { Text($0.name).tag($0.id) }
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

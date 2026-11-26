@@ -373,10 +373,17 @@ final class StudioStore: ObservableObject {
                                             preserveReferenceSize: generating ? opts.preserveReferenceSize : nil)
                 let action = generating ? "Generating" : "Enhancing"
                 let label = count == 1 ? action : "\(action) \(i + 1) of \(count)"
+                let completed = stage * count + i
+                let total = Double(count * routes.count)
                 func progress(_ fraction: Double?, _ message: String) {
                     self.update(job.id) {
                         $0.message = message.isEmpty ? label : label + " · " + message
-                        $0.progress = fraction.map { (Double(stage * count + i) + min(max($0,0),1)) / Double(count * routes.count) }
+                        if let fraction {
+                            let reported = (Double(completed) + min(max(fraction, 0), 1)) / total
+                            $0.progress = max($0.progress ?? 0, reported)
+                        } else if completed > 0 {
+                            $0.progress = max($0.progress ?? 0, Double(completed) / total)
+                        }
                     }
                 }
                 let base = recipe.generator == nil ? String(recipe.inputs[i].url.deletingPathExtension().lastPathComponent.prefix(70)) : "refract"
@@ -423,7 +430,10 @@ final class StudioStore: ObservableObject {
                 if !generating { item.enhanced = output }
                 try? fm.removeItem(at: raw)
                 results[i] = item
-                update(job.id) { $0.results = results.values.sorted { $0.index < $1.index } }
+                update(job.id) {
+                    $0.results = results.values.sorted { $0.index < $1.index }
+                    $0.progress = Double(completed + 1) / total
+                }
                 if jobs.first(where: { $0.id == job.id })?.hiddenFilmstripResults?.contains(item.id) != true {
                     selectedResult = item
                 }

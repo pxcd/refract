@@ -3,11 +3,12 @@ import UniformTypeIdentifiers
 
 private struct ControlSection<Content: View>: View {
     let title: String
+    var showsTitle = true
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            if showsTitle { Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -33,8 +34,8 @@ struct GenerationControls: View {
                            (1216, 832, "Landscape"), (768, 1344, "Tall"), (1344, 768, "Wide")]
 
     var body: some View {
-        Section {
-            ModelPicker(title: "Checkpoint", kind: .generation, id: $studio.activeGenerationID)
+        Section("Checkpoint") {
+            ModelPicker(title: "Checkpoint", kind: .generation, id: $studio.activeGenerationID, showsTitle: false)
         }
         Section("Prompt") {
             ZStack(alignment: .topLeading) {
@@ -216,20 +217,31 @@ struct EnhancementControls: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        Section {
-            ModelPicker(title: "Restoration model", kind: .enhancement, id: $studio.activeEnhancementID)
+        Section("Restoration model") {
+            ModelPicker(title: "Restoration model", kind: .enhancement, id: $studio.activeEnhancementID, showsTitle: false)
         }
         Section("Source images") {
             Button {
                 add(StudioPanels.choose("Add images or folders", directories: true, multiple: true, types: [.image]))
             } label: {
-                Label("Add Images or Folders…", systemImage: "plus.circle")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                VStack(spacing: 7) {
+                    Image(systemName: "square.and.arrow.down").font(.title2).foregroundStyle(.secondary)
+                    Text("Drop images or folders here").fontWeight(.medium)
+                    Text("Click to browse").font(.caption).foregroundStyle(.secondary)
+                }
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(12)
+                .background(dropTargeted ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.5),
+                                      style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
+                }
+                .contentShape(Rectangle())
             }
-            .buttonStyle(.link)
-            .foregroundStyle(dropTargeted ? Color.accentColor : Color.primary)
-            .help("Drop images or folders here, or click to browse")
+            .buttonStyle(.plain)
+            .accessibilityLabel("Add images or folders")
             .dropDestination(for: URL.self) { urls, _ in add(urls); return !urls.isEmpty } isTargeted: { dropTargeted = $0 }
             ForEach(inputs, id: \.self) { input in
                 HStack {
@@ -245,7 +257,7 @@ struct EnhancementControls: View {
             }
         }
         Section("Output") {
-            OutputScaleControl()
+            OutputScaleControl(showsTitle: false)
             if !inputs.isEmpty { BatchDimensions(inputs: inputs, options: studio.enhancement) }
             HStack {
                 Label(studio.outputDirectory.lastPathComponent, systemImage: "folder")
@@ -259,8 +271,8 @@ struct EnhancementControls: View {
                 .accessibilityLabel("Choose enhancement output folder")
             }
         }
-        Section {
-            ValueSlider(label: "Input softness", value: $studio.enhancement.softness, range: 0...1)
+        Section("Input softness") {
+            ValueSlider(label: "Input softness", value: $studio.enhancement.softness, range: 0...1, showsLabel: false)
                 .help("Downsample the conditioning image to soften input detail before restoration.")
         }
     }
@@ -343,21 +355,38 @@ private struct BatchDimensions: View {
 
 private struct OutputScaleControl: View {
     @EnvironmentObject private var studio: StudioStore
+    var showsTitle = true
+
     var body: some View {
-        ControlSection(title: "Enhancement size") {
-            Picker("Output scale", selection: Binding(get: {
-                studio.enhancement.customLongEdge == nil ? Int(studio.enhancement.scale) : 0
-            }, set: { scale in
-                if scale == 0 { studio.enhancement.customLongEdge = 2048 }
-                else { studio.enhancement.customLongEdge = nil; studio.enhancement.scale = Double(scale) }
-            })) {
-                Text("1×").tag(1); Text("2×").tag(2); Text("3×").tag(3); Text("4×").tag(4); Text("Custom").tag(0)
+        ControlSection(title: "Enhancement size", showsTitle: showsTitle) {
+            ViewThatFits(in: .horizontal) {
+                scalePicker
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .fixedSize(horizontal: true, vertical: false)
+                scalePicker.pickerStyle(.menu)
             }
-            .pickerStyle(.segmented).labelsHidden().controlSize(.small)
+            .frame(maxWidth: .infinity, alignment: .leading)
             if studio.enhancement.customLongEdge != nil {
                 NumberInput("Long edge (px)", value: Binding(get: { studio.enhancement.customLongEdge ?? 2048 },
                     set: { studio.enhancement.customLongEdge = $0 }))
             }
+        }
+    }
+
+    private var scalePicker: some View {
+        Picker("Output scale", selection: Binding(get: {
+            studio.enhancement.customLongEdge == nil ? Int(studio.enhancement.scale) : 0
+        }, set: { scale in
+            if scale == 0 { studio.enhancement.customLongEdge = 2048 }
+            else { studio.enhancement.customLongEdge = nil; studio.enhancement.scale = Double(scale) }
+        })) {
+            Text("1×").tag(1)
+            Text("2×").tag(2)
+            Text("3×").tag(3)
+            Text("4×").tag(4)
+            Text("Custom").tag(0)
         }
     }
 }
@@ -381,11 +410,12 @@ struct ValueSlider: View {
     @Binding var value: Double
     let range: ClosedRange<Double>
     var step = 0.01
+    var showsLabel = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text(label)
+                if showsLabel { Text(label) }
                 Spacer()
                 Text(value, format: .number.precision(.fractionLength(0...2)))
                     .monospacedDigit().foregroundStyle(.secondary)
