@@ -45,6 +45,8 @@ In **Enhance**, drop in images or a folder. Choose **1×** to restore at the ori
 
 Open **Job Queue** to track progress, retry an unfinished job, or use **Cancel All Queued Jobs** to remove waiting jobs while the current job finishes. Refract saves originals and enhancements separately, with a JSON sidecar for each. Choose PNG, JPEG, or TIFF in Settings.
 
+Open **History** to search past renders by prompt, model, or date. Use a result’s **Use Settings** action, or right-click a generated thumbnail and choose **Use Settings from This Image**, to restore the prompts, exact seed, model, and LoRAs. History remains searchable after clearing the filmstrip. **Clear History** hides those entries while leaving your files and job queue available.
+
 ## Runtime and licenses
 
 Exports use the model’s sRGB image output and preserve source files.

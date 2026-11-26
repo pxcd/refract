@@ -130,6 +130,7 @@ struct StudioView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var fileSelection: StudioFileSelection
     @State private var showQueue = false
+    @State private var showHistory = false
     @State private var showInspector = true
     private var workspace: Workspace { fileSelection.workspace }
     private var inputs: [URL] { fileSelection.inputs }
@@ -177,6 +178,8 @@ struct StudioView: View {
                     Label("Models", systemImage: "square.3.layers.3d")
                 }
                     .help("Manage models")
+                Button { showHistory = true } label: { Label("History", systemImage: "clock.arrow.circlepath") }
+                    .help("Search render history")
                 Button { showQueue = true } label: { Label("Queue", systemImage: "list.bullet.rectangle") }
                     .help("View job queue")
                 Button { showInspector.toggle() } label: { Label("Inspector", systemImage: "sidebar.right") }
@@ -188,6 +191,14 @@ struct StudioView: View {
             QueueSheet { isGeneration, result in
                 fileSelection.workspace = isGeneration ? .generate : .enhance
                 if isGeneration { generationResult = result } else { enhancementResult = result }
+            }
+        }
+        .sheet(isPresented: $showHistory) {
+            HistorySheet { result in
+                fileSelection.workspace = .generate
+                showInspector = true
+                generationResult = result
+                studio.selectedResult = result
             }
         }
         .onAppear {
@@ -206,6 +217,7 @@ struct StudioView: View {
         }
         .onChange(of: fileSelection.openRequest) { _, _ in
             showQueue = false
+            showHistory = false
             showInspector = true
             hiddenSourcePreviews.remove(.enhance)
             enhancementResult = nil
@@ -432,6 +444,13 @@ struct StudioView: View {
         .help(displayed.lastPathComponent)
         .accessibilityLabel(displayed.lastPathComponent)
         .contextMenu {
+            if job.recipe.generator != nil {
+                Button("Use Settings from This Image", systemImage: "slider.horizontal.3") {
+                    do { try studio.useGenerationSettings(from: result.id, in: job.id) }
+                    catch { studio.notice = error.localizedDescription }
+                }
+                Divider()
+            }
             Button("Show in Finder", systemImage: "folder") { studio.reveal(displayed) }
             Button("Save As…", systemImage: "square.and.arrow.up") { StudioPanels.save(displayed, studio: studio) }
             if result.enhanced != nil {
