@@ -89,6 +89,69 @@ final class StudioTests: XCTestCase {
         XCTAssertEqual(sdxl, draft)
     }
 
+    @MainActor func testUseSettingsFromAnIndividualGeneratedImage() async throws {
+        let root = try temporary()
+        let models = ModelStore(directory: root)
+        let source = try checkpoint(root)
+        let generator = try await models.importModel(at: source)
+        let alternateURL = root.appendingPathComponent("alternate.safetensors")
+        var alternateData = try Data(contentsOf: source)
+        alternateData[alternateData.index(before: alternateData.endIndex)] = 1
+        try alternateData.write(to: alternateURL)
+        let alternate = try await models.importModel(at: alternateURL)
+
+        let adapterURL = root.appendingPathComponent("test-adapter.safetensors")
+        let header = Data(#"{"lora_unet_x.lora_down.weight":{"dtype":"F16","shape":[1,1],"data_offsets":[0,2]},"lora_unet_x.lora_up.weight":{"dtype":"F16","shape":[1,1],"data_offsets":[2,4]}}"#.utf8)
+        var headerSize = UInt64(header.count).littleEndian
+        let adapterData = withUnsafeBytes(of: &headerSize) { Data($0) } + header + Data(count: 4)
+        try adapterData.write(to: adapterURL)
+        let adapter = try await models.importModel(at: adapterURL)
+        let choice = LoRAChoice(modelID: adapter.id, scale: 0.65)
+
+        let defaults = isolatedDefaults()
+        let store = StudioStore(models: models, worker: TestClient(), directory: root, defaults: defaults)
+        store.outputDirectory = root.appendingPathComponent("images")
+        store.activeGenerationID = generator.id
+        store.generation.prompt = "An enamel teapot"
+        store.generation.negativePrompt = "Lettering"
+        store.generation.seed = 91
+        store.generation.loras = [choice]
+        store.generation.count = 2
+        store.generation.width = 64
+        store.generation.height = 64
+        store.generate()
+        try await wait(store)
+        let job = try XCTUnwrap(store.jobs.first)
+        let second = try XCTUnwrap(job.results.last)
+        XCTAssertEqual(job.results.count, 2)
+        try FileManager.default.removeItem(at: second.original.appendingPathExtension("json"))
+
+        let client = TestClient()
+        let reopened = StudioStore(models: models, worker: client, directory: root, defaults: defaults)
+        reopened.activeGenerationID = alternate.id
+        reopened.generation.prompt = "A newer draft"
+        reopened.generation.width = 768
+        try reopened.useGenerationSettings(from: second.id, in: job.id)
+        XCTAssertEqual(reopened.activeGenerationID, generator.id)
+        XCTAssertEqual(reopened.generation.prompt, "An enamel teapot")
+        XCTAssertEqual(reopened.generation.negativePrompt, "Lettering")
+        XCTAssertEqual(reopened.generation.seed, 92)
+        XCTAssertEqual(reopened.generation.loras, [choice])
+        XCTAssertEqual(reopened.generation.width, 768)
+        XCTAssertEqual(reopened.jobs.count, 1)
+        XCTAssertTrue(client.requests.isEmpty)
+
+        try models.unlink(adapter)
+        reopened.activeGenerationID = alternate.id
+        reopened.generation.prompt = "Keep this draft"
+        let draft = reopened.generation
+        XCTAssertThrowsError(try reopened.useGenerationSettings(from: second.id, in: job.id)) { error in
+            XCTAssertTrue(error.localizedDescription.contains(adapter.name))
+        }
+        XCTAssertEqual(reopened.activeGenerationID, alternate.id)
+        XCTAssertEqual(reopened.generation, draft)
+    }
+
     @MainActor func testSnapshotPartialFailureRetryAndPreserveSource() async throws {
         let root = try temporary(), models = ModelStore(directory:root), client = TestClient()
         let source = try checkpoint(root)
@@ -195,9 +258,9 @@ final class StudioTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: discarded.original.path))
     }
 
-    @MainActor func testClearFilmstripKeepsFilesAndJobHistoryAcrossRelaunch() async throws {
+    @MainActor func testRenderHistorySurvivesFilmstripClearAndCanBeCleared() async throws {
         let root = try temporary(), models = ModelStore(directory: root)
-        try await models.importModel(at: checkpoint(root))
+        let model = try await models.importModel(at: checkpoint(root))
         let defaults = isolatedDefaults()
         let store = StudioStore(models: models, worker: TestClient(), directory: root, defaults: defaults)
         store.outputDirectory = root.appendingPathComponent("images")
@@ -207,21 +270,45 @@ final class StudioTests: XCTestCase {
         store.generate()
         try await wait(store)
         let first = try XCTUnwrap(store.jobs.first?.results.first)
+        let recordedDate = try XCTUnwrap(first.createdAt)
+        XCTAssertTrue(Calendar.current.isDateInToday(recordedDate))
         let bytes = try Data(contentsOf: first.original)
         store.clearFilmstrip(generated: true)
         XCTAssertTrue(try XCTUnwrap(store.jobs.first).filmstripResults.isEmpty)
         XCTAssertNil(store.selectedResult)
-        let reopened = StudioStore(models: models, worker: TestClient(), directory: root, defaults: defaults)
-        XCTAssertEqual(reopened.jobs.first?.results, [first])
+
+        let client = TestClient()
+        let reopened = StudioStore(models: models, worker: client, directory: root, defaults: defaults)
         XCTAssertTrue(try XCTUnwrap(reopened.jobs.first).filmstripResults.isEmpty)
+        let entry = try XCTUnwrap(reopened.generationHistory.first)
+        XCTAssertEqual(entry.id, first.id)
+        let date = try XCTUnwrap(Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 27)))
+        XCTAssertTrue(entry.matches(["source", model.name, "2026-11-27"], date: date))
+        XCTAssertTrue(entry.matches(["source"], date: nil))
+        XCTAssertFalse(entry.matches(["2025-11-27"], date: date))
+        try reopened.useGenerationSettings(from: entry.id, in: entry.jobID)
+        XCTAssertEqual(reopened.generation.prompt, "Keep the source image")
+        XCTAssertEqual(reopened.generation.seed, first.seed)
         XCTAssertEqual(try Data(contentsOf: first.original), bytes)
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.original.appendingPathExtension("json").path))
 
-        reopened.generation = store.generation
+        reopened.generation.width = 64
+        reopened.generation.height = 64
+        reopened.generation.prompt = "A newer render"
+        client.onRender = { _ in try reopened.clearGenerationHistory() }
+        defer { client.onRender = nil }
         reopened.generate()
         try await wait(reopened)
+        XCTAssertEqual(reopened.generationHistory.map(\.prompt), ["A newer render"])
         XCTAssertEqual(reopened.jobs.flatMap(\.filmstripResults).count, 1)
         XCTAssertEqual(reopened.jobs.flatMap(\.results).count, 2)
+
+        try reopened.clearGenerationHistory()
+        let afterClear = StudioStore(models: models, worker: TestClient(), directory: root, defaults: defaults)
+        XCTAssertTrue(afterClear.generationHistory.isEmpty)
+        XCTAssertEqual(afterClear.jobs.flatMap(\.filmstripResults).count, 1)
+        XCTAssertEqual(afterClear.jobs.flatMap(\.results).count, 2)
+        XCTAssertEqual(try Data(contentsOf: first.original), bytes)
     }
 
     @MainActor func testUnreadableQueueSurvivesQuit() throws {

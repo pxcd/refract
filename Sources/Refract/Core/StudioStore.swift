@@ -134,6 +134,33 @@ final class StudioStore: ObservableObject {
         } catch { notice = error.localizedDescription }
     }
 
+    func useGenerationSettings(from resultID: UUID, in jobID: UUID) throws {
+        guard let job = jobs.first(where: { $0.id == jobID }),
+              let generator = job.recipe.generator,
+              let result = job.results.first(where: { $0.id == resultID }) else {
+            throw StudioError("Generation settings are unavailable for this image.")
+        }
+
+        let missing = ([generator] + job.recipe.loras).filter { saved in
+            !models.models.contains { model in
+                model.id == saved.id && model.kind == saved.kind && FileManager.default.fileExists(atPath: model.path)
+            }
+        }
+        guard missing.isEmpty else {
+            let names = missing.map(\.name).joined(separator: ", ")
+            throw StudioError("Reinstall or relink \(names) in Models to use these settings.")
+        }
+
+        activeGenerationID = generator.id
+        var draft = generation
+        let saved = job.recipe.generation
+        draft.prompt = saved.prompt
+        draft.negativePrompt = saved.negativePrompt
+        draft.seed = result.seed
+        draft.loras = saved.loras
+        generation = draft
+    }
+
     func enhance(_ urls: [URL]) {
         do {
             let model = try selected(activeEnhancementID, .enhancement)
@@ -242,6 +269,32 @@ final class StudioStore: ObservableObject {
 
     func reveal(_ url: URL) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
 
+    var generationHistory: [GenerationHistoryEntry] {
+        jobs.flatMap { job -> [GenerationHistoryEntry] in
+            guard let model = job.recipe.generator else { return [] }
+            let settings = job.recipe.generation
+            return job.results.reversed().compactMap { result in
+                guard job.hiddenHistoryResults?.contains(result.id) != true else { return nil }
+                return GenerationHistoryEntry(jobID: job.id, result: result, prompt: settings.prompt,
+                                              negativePrompt: settings.negativePrompt, modelName: model.name,
+                                              modelVariant: model.variant)
+            }
+        }
+    }
+
+    func clearGenerationHistory() throws {
+        if let queueReadError { throw StudioError(queueReadError) }
+        var updated = jobs
+        for index in updated.indices where updated[index].recipe.generator != nil {
+            let results = updated[index].results
+            if !results.isEmpty {
+                updated[index].hiddenHistoryResults = Set(results.map(\.id))
+            }
+        }
+        try writeQueue(updated)
+        jobs = updated
+    }
+
     func clearFilmstrip(generated: Bool) {
         for index in jobs.indices where (jobs[index].recipe.generator != nil) == generated && !jobs[index].results.isEmpty {
             jobs[index].hiddenFilmstripResults = Set(jobs[index].results.map(\.id))
@@ -297,6 +350,7 @@ final class StudioStore: ObservableObject {
         }
         jobs[index].trashedResultIndices = (jobs[index].trashedResultIndices ?? []).union([result.index])
         jobs[index].hiddenFilmstripResults?.remove(id)
+        jobs[index].hiddenHistoryResults?.remove(id)
         jobs[index].results.removeAll { $0.id == id }
         if selectedResult?.id == id {
             selectedResult = jobs[index].filmstripResults.last
@@ -439,7 +493,11 @@ final class StudioStore: ObservableObject {
                         try ImageFiles.publish(raw: raw, output: output, format: recipe.format, quality: recipe.jpegQuality, source: metadataSource, receipt: data)
                     }.value
                 }
-                var item = existing ?? StudioResult(id: UUID(), original: generating ? output : input!, enhanced: nil, seed: seed, index: i)
+                let outputDate = alreadyPublished
+                    ? (try? output.resourceValues(forKeys: [.creationDateKey]).creationDate)
+                    : Date()
+                var item = existing ?? StudioResult(id: UUID(), original: generating ? output : input!, enhanced: nil,
+                                                    seed: seed, index: i, createdAt: generating ? outputDate : nil)
                 if !generating { item.enhanced = output }
                 try? fm.removeItem(at: raw)
                 results[i] = item
@@ -489,9 +547,13 @@ final class StudioStore: ObservableObject {
     private func persist() {
         guard queueReadError == nil else { return }
         do {
-            try FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(jobs).write(to: stateURL, options: .atomic)
+            try writeQueue(jobs)
         } catch { notice = "Could not save the queue. " + error.localizedDescription }
+    }
+
+    private func writeQueue(_ state: [StudioJob]) throws {
+        try FileManager.default.createDirectory(at: stateURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(state).write(to: stateURL, options: .atomic)
     }
 
     private func persistPreferences() {

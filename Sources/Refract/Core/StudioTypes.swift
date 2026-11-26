@@ -75,6 +75,37 @@ struct StudioResult: Codable, Hashable, Identifiable {
     var enhanced: URL?
     let seed: Int
     var index: Int = 0
+    var createdAt: Date? = nil
+}
+
+struct GenerationHistoryEntry: Identifiable {
+    let jobID: UUID
+    let result: StudioResult
+    let prompt: String
+    let negativePrompt: String
+    let modelName: String
+    let modelVariant: String
+
+    var id: UUID { result.id }
+    var imageURL: URL { result.enhanced ?? result.original }
+
+    func matches(_ terms: [String], date: Date?, calendar: Calendar = .current) -> Bool {
+        guard !terms.isEmpty else { return true }
+        var fields = [prompt, negativePrompt, modelName, modelVariant]
+        if let date {
+            var gregorian = Calendar(identifier: .gregorian)
+            gregorian.timeZone = calendar.timeZone
+            let parts = gregorian.dateComponents([.year, .month, .day], from: date)
+            if let year = parts.year, let month = parts.month, let day = parts.day {
+                fields.append(String(format: "%04d-%02d-%02d", year, month, day))
+            }
+            fields.append(date.formatted(date: .abbreviated, time: .omitted))
+            fields.append(date.formatted(date: .numeric, time: .omitted))
+            if calendar.isDateInToday(date) { fields.append("Today") }
+            if calendar.isDateInYesterday(date) { fields.append("Yesterday") }
+        }
+        return terms.allSatisfy { term in fields.contains { $0.localizedStandardContains(term) } }
+    }
 }
 
 struct InputImage: Codable {
@@ -123,6 +154,7 @@ struct StudioJob: Codable, Identifiable {
     var results: [StudioResult] = []
     var trashedResultIndices: Set<Int>?
     var hiddenFilmstripResults: Set<UUID>?
+    var hiddenHistoryResults: Set<UUID>?
     var generationGroupID: UUID?
 
     var filmstripResults: [StudioResult] {
