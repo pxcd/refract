@@ -19,17 +19,35 @@ open build/Refract.app
 
 The runtime preparation step downloads a private CPython 3.12 and the pinned Darwin arm64 wheels. The packaged app carries its own runtime and runs inference offline. Model downloads are explicit network operations. The package script ad-hoc signs the personal build and writes its source and artifact identity to `build/provenance.json`.
 
-## Models and output
+## Models
 
-Open Models to add a local SDXL `.safetensors` checkpoint, compatible LoRAs or a supported prepared MLX package. Download curated packages from the Models catalog, or import a folder matching the pinned files by reference. The MLX generation models support text-to-image, and Qwen Image also accepts a negative prompt. Reference images and LoRAs are available with SDXL. Existing Hugging Face Juggernaut checkpoints are discovered by reference. A compatible local Diffusers configuration is used when present. The worker also includes offline SDXL configuration and tokenizer resources. Model files remain outside the app. The catalog records the source and license for each curated package.
+Open **Models** to browse the catalog or import a local file. **Your Models** groups downloads and local imports at the top. Use the Generation, Enhancement, and LoRAs filters to narrow the list.
 
-Run a standalone enhancement by dropping images or a folder in Enhance. Use Fit and Actual Size to compare the aligned images. Choose an output folder, PNG, JPEG or TIFF in Settings. Generated originals and enhancements receive distinct names and individual JSON settings sidecars. The application records queue state and model selections under the user's Application Support/Refract directory. A failed job can retry its unfinished images.
+- **Installed** models are downloads managed by Refract. Use **Move to Trash** to remove their files. You can also cancel an in-progress download to discard its partial files.
+- **Linked** models use their existing files in place. Use **Show in Finder** to locate them or **Unlink from Refract** to remove the catalog entry while keeping the files available to other apps.
+- Import an SDXL checkpoint or compatible LoRA as a `.safetensors` file. Import a prepared MLX model as a folder matching a supported catalog package. Refract can discover cached Juggernaut XI checkpoints by reference.
 
-The default SDXL sampler preset targets standard Juggernaut XI. Distilled checkpoints may need different steps and guidance. Use standard four-channel SDXL checkpoints with both text encoders and a VAE. Specialized conditioning architectures and video are outside this release. SeedVR2 reconstructs photographic detail and can change texture or lettering. Memory usage depends on the output geometry as well as model precision. For original-size restoration of images up to 256 pixels on the long edge, Refract runs one 2× restoration and downsamples to the original size to reduce changes to faces and lettering. The settings sidecar includes the internal processing size.
+| Model | Workflow | Recommended unified memory |
+| --- | --- | ---: |
+| SDXL and Juggernaut XI | Text-to-image and image-to-image with optional SDXL LoRAs | 32 GB |
+| FLUX.1 Krea Dev | Text-to-image | 32 GB |
+| Qwen Image 2512 | Text-to-image with an optional negative prompt | 48 GB |
+| Z-Image Turbo | Text-to-image | 24 GB |
+| SeedVR2 3B, 7B, and 7B Sharp | Image restoration and upscaling | 32 GB |
+
+The catalog compares these recommendations with your Mac’s unified memory. The estimates come from measured runs at 832 × 1216 for generation and 1664 × 2432 for enhancement. The SDXL estimate uses Juggernaut XI as a reference. Larger outputs, different checkpoints, and other apps can change memory needs.
+
+## Generate and Enhance
+
+In **Generate**, choose a model and enter your prompt. With SDXL, use **Advanced → LoRA adapters** to apply imported LoRAs or add a reference image for image-to-image generation. Enable **Enhance after generation** to run SeedVR2 on each result.
+
+In **Enhance**, drop in images or a folder. Choose **1×** to restore at the original output dimensions or choose a higher scale to upscale. Drag the divider to compare the original and enhanced image. For original-size restoration of images up to 256 pixels on the long edge, Refract runs one 2× restoration and downsamples to the original size to reduce changes to faces and lettering.
+
+Open **Job Queue** to track progress, retry an unfinished job, or use **Cancel All Queued Jobs** to remove waiting jobs while the current job finishes. Refract saves originals and enhancements separately, with a JSON sidecar for each. Choose PNG, JPEG, or TIFF in Settings.
 
 ## Runtime and licenses
 
-Exports use the model’s sRGB image output. The source file stays intact. The Models catalog compares this Mac’s unified memory with model recommendations based on measured runs at representative output sizes.
+Exports use the model’s sRGB image output and preserve source files.
 
 The Swift app calls Diffusers/PyTorch MPS for SDXL and MLX-Gen/MLX for the other generation models and SeedVR2 over a private JSON-lines subprocess. The pinned wheels include their original package notices. See the SDXL configuration license and source information under `Worker/configs`. Juggernaut weights are user-provided. ByteDance publishes the original SeedVR2 3B and 7B weights under Apache-2.0. Model-specific terms apply separately from runtime code. In the pinned OpenCV wheel, FFmpeg reports GPLv3 or later. PyAV also includes codec libraries. A public release needs a redistribution review and the appropriate notices and source provisions.
 
