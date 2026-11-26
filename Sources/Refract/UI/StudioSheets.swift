@@ -8,7 +8,15 @@ struct QueueSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SheetHeader(title: "Job Queue") { dismiss() }
+            HStack {
+                Text("Job Queue").font(.title2.bold())
+                Spacer()
+                Button("Cancel All Queued Jobs", role: .destructive) { studio.removeQueuedJobs() }
+                    .disabled(!studio.jobs.contains { $0.status == .pending })
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 15)
             Divider()
             if studio.jobs.isEmpty {
                 ContentUnavailableView("Queue is empty", systemImage: "list.bullet.rectangle",
@@ -72,18 +80,6 @@ struct QueueSheet: View {
         case .failed: return "exclamationmark.triangle"
         case .cancelled: return "minus.circle"
         }
-    }
-}
-
-private struct SheetHeader: View {
-    let title: String
-    let done: () -> Void
-    var body: some View {
-        HStack {
-            Text(title).font(.title2.bold())
-            Spacer()
-            Button("Done", action: done).keyboardShortcut(.defaultAction)
-        }.padding(.horizontal, 20).padding(.vertical, 15)
     }
 }
 

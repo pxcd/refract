@@ -46,33 +46,28 @@ private extension ModelKind {
 }
 
 struct ModelManagerView: View {
-    private enum Page: String {
-        case installed = "Installed"
-        case catalog = "Catalog"
-    }
-
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var studio: StudioStore
     @EnvironmentObject private var models: ModelStore
     @EnvironmentObject private var navigation: ModelManagerNavigation
-    @State private var page: Page? = .installed
     @State private var kind: ModelKind?
-    @State private var selection: String?
+    @State private var selection: ModelCatalogRow.ID?
     @State private var query = ""
     @State private var dropTargeted = false
     @State private var importing: String?
     @State private var errorMessage: String?
     @State private var removing: ModelStore.ModelRemoval?
 
-    private var installed: [StudioModel] {
-        models.models.filter { model in
-            (kind == nil || model.kind == kind) && matches([model.name, model.variant, model.kind.title, model.precision])
-        }
+    private var rows: [ModelCatalogRow] {
+        ModelCatalogRow.make(catalog: ModelStore.catalog, localModels: models.models)
     }
 
-    private var catalog: [CatalogModel] {
-        ModelStore.catalog.filter { entry in
-            (kind == nil || entry.kind == kind) &&
-                matches([entry.name, entry.repository, entry.variant, entry.kind.title, entry.precision])
+    private var visibleRows: [ModelCatalogRow] {
+        rows.filter { row in
+            guard kind == nil || row.kind == kind else { return false }
+            let fields = [row.name, row.kind.title, row.entry?.repository, row.entry?.variant,
+                          row.entry?.precision, row.model?.name, row.model?.variant, row.model?.precision]
+            return matches(fields.compactMap { $0 })
         }
     }
 
@@ -81,28 +76,19 @@ struct ModelManagerView: View {
         return terms.allSatisfy { term in fields.contains { $0.localizedStandardContains(String(term)) } }
     }
 
-    private var visibleIDs: [String] {
-        page == .catalog ? catalog.map(\.id) : installed.map(\.id)
-    }
+    private var visibleIDs: [ModelCatalogRow.ID] { visibleRows.map(\.id) }
 
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
-                List(selection: $page) {
-                    Label("Installed", systemImage: "tray.full").tag(Page.installed)
-                    Label("Catalog", systemImage: "square.grid.2x2").tag(Page.catalog)
-                }
-                .listStyle(.sidebar)
-                .frame(width: 165)
-                Divider()
                 modelList
-                    .frame(width: geometry.size.width * 0.46)
+                    .frame(width: geometry.size.width * 0.60)
                 Divider()
                 detailPane
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
-        .frame(minWidth: 860, minHeight: 450)
+        .frame(minWidth: 700, minHeight: 450)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button(action: chooseFiles) { Label("Import…", systemImage: "plus") }
@@ -142,11 +128,7 @@ struct ModelManagerView: View {
             }
             Button("Cancel", role: .cancel) { removing = nil }
         } message: { removal in
-            if removal.followsLink {
-                Text("Move the weights for \(removal.model.name) to the Trash. Other links or apps using these weights will lose access until you restore them.")
-            } else {
-                Text("Move the model files for \(removal.model.name) to the Trash.")
-            }
+            Text("Move the model files for \(removal.model.name) to the Trash.")
         }
     }
 
@@ -164,37 +146,26 @@ struct ModelManagerView: View {
                     .font(.callout)
                     .padding(12)
             }
-            if visibleIDs.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let matches = visibleRows
+            if matches.isEmpty, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ContentUnavailableView.search(text: query)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if visibleIDs.isEmpty {
-                ContentUnavailableView(page == .catalog ? "No catalog entries" : "No models installed",
-                                       systemImage: "square.3.layers.3d",
-                                       description: Text(page == .catalog ? "Choose another model type or import a local file." : "Browse the catalog or import your own models."))
+            } else if matches.isEmpty {
+                ContentUnavailableView("No models", systemImage: "square.3.layers.3d",
+                                       description: Text("Choose another model type or import a local file."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                let yourModels = matches.filter { $0.model != nil }
+                let catalogModels = matches.filter { $0.model == nil }
                 List(selection: $selection) {
-                    if page == .catalog {
-                        ForEach(catalog) { entry in
-                            row(entry.name, kind: entry.kind) {
-                                downloadAction(entry).buttonStyle(.borderless)
-                                if let model = installedModel(for: entry) {
-                                    modelActions(model)
-                                }
-                            }
-                            .tag(entry.id)
+                    if !yourModels.isEmpty {
+                        Section("Your Models") {
+                            ForEach(yourModels, content: row)
                         }
-                    } else {
-                        ForEach(installed) { model in
-                            row(model.name, kind: model.kind) {
-                                if isActive(model) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(selection == model.id ? Color.primary : Color.accentColor)
-                                        .accessibilityLabel("Active")
-                                }
-                                modelActions(model)
-                            }
-                            .tag(model.id)
+                    }
+                    if !catalogModels.isEmpty {
+                        Section("Catalog") {
+                            ForEach(catalogModels, content: row)
                         }
                     }
                 }
@@ -215,10 +186,8 @@ struct ModelManagerView: View {
     }
 
     @ViewBuilder private var detailPane: some View {
-        if page == .catalog, let entry = catalog.first(where: { $0.id == selection }) {
-            catalogDetail(entry)
-        } else if page != .catalog, let model = installed.first(where: { $0.id == selection }) {
-            installedDetail(model)
+        if let item = visibleRows.first(where: { $0.id == selection }) {
+            modelDetail(item)
         } else {
             ContentUnavailableView("Select a model", systemImage: "square.3.layers.3d")
         }
@@ -246,34 +215,65 @@ struct ModelManagerView: View {
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
     }
 
-    private func row<Trailing: View>(_ title: String, kind: ModelKind, @ViewBuilder trailing: () -> Trailing) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: kind.symbol)
+    private func row(_ item: ModelCatalogRow) -> some View {
+        let useLightIcon = selection == item.id || colorScheme == .dark
+        let iconColor: Color
+        switch item.model?.managed {
+        case .some(true):
+            iconColor = useLightIcon ? Color(red: 1.0, green: 0.83, blue: 0.28)
+                                     : Color(red: 0.61, green: 0.40, blue: 0.03)
+        case .some(false):
+            iconColor = useLightIcon ? Color(red: 0.40, green: 0.91, blue: 0.80)
+                                     : Color(red: 0.00, green: 0.45, blue: 0.42)
+        case nil:
+            iconColor = .secondary
+        }
+        return HStack(spacing: 10) {
+            Image(systemName: item.kind.symbol)
+                .fontWeight(item.model != nil ? .semibold : .regular)
                 .frame(width: 22)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(iconColor)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).lineLimit(1)
-                Text(kind.title).font(.caption).foregroundStyle(.secondary)
+                Text(item.name).lineLimit(1)
+                Text(item.kind.title).font(.caption).foregroundStyle(.secondary)
             }
             .fixedSize(horizontal: false, vertical: true)
             Spacer()
-            trailing()
+            if let model = item.model {
+                Text(model.managed ? "Installed" : "Linked")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                modelActions(model)
+            } else if let entry = item.entry, let transfer = models.downloads[entry.id], transfer.isRunning {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(transfer.isCancelling ? "Canceling download" : "Downloading")
+            }
         }
         .frame(minHeight: 42)
         .fixedSize(horizontal: false, vertical: true)
+        .tag(item.id)
     }
 
     @ViewBuilder private func downloadAction(_ entry: CatalogModel) -> some View {
-        if installedModel(for: entry) != nil {
-            Label("Installed", systemImage: "checkmark.circle").foregroundStyle(.secondary)
+        if models.downloads[entry.id]?.isCancelling == true {
+            Button("Canceling…") {}.disabled(true)
         } else if models.downloads[entry.id]?.isRunning == true {
-            Button("Cancel") { models.cancelDownload(entry.id) }
+            cancelDownloadButton(entry)
         } else if entry.canDownload {
-            Button(models.downloads[entry.id] == nil ? "Download" : "Resume") {
-                Task {
-                    do { try await models.download(entry) }
-                    catch is CancellationError {}
-                    catch { errorMessage = error.localizedDescription }
+            let canResume = models.hasPartialDownload(entry)
+            HStack {
+                Button(canResume ? "Resume" : "Download") {
+                    Task {
+                        do { try await models.download(entry) }
+                        catch is CancellationError {}
+                        catch { errorMessage = error.localizedDescription }
+                    }
+                }
+                if canResume {
+                    cancelDownloadButton(entry).buttonStyle(.bordered)
                 }
             }
         } else {
@@ -281,8 +281,12 @@ struct ModelManagerView: View {
         }
     }
 
-    private func installedModel(for entry: CatalogModel) -> StudioModel? {
-        models.models.first { $0.id == entry.identity }
+    private func cancelDownloadButton(_ entry: CatalogModel) -> some View {
+        Button("Cancel", role: .destructive) {
+            do { try models.cancelDownload(entry) }
+            catch { errorMessage = error.localizedDescription }
+        }
+        .help("Discard the incomplete download")
     }
 
     private func modelActions(_ model: StudioModel) -> some View {
@@ -291,8 +295,14 @@ struct ModelManagerView: View {
                 studio.reveal(URL(fileURLWithPath: model.path))
             }
             Divider()
-            Button("Move to Trash…", systemImage: "trash", role: .destructive) {
-                removing = models.removal(for: model)
+            if let removal = models.removal(for: model) {
+                Button("Move to Trash…", systemImage: "trash", role: .destructive) {
+                    removing = removal
+                }
+            } else if !model.managed {
+                Button("Unlink from Refract", systemImage: "minus.circle") {
+                    do { try models.unlink(model) } catch { errorMessage = error.localizedDescription }
+                }
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -303,30 +313,31 @@ struct ModelManagerView: View {
         .accessibilityLabel("Actions for \(model.name)")
     }
 
-    private func catalogDetail(_ entry: CatalogModel) -> some View {
-        detail(entry.name, kind: entry.kind) {
-            Text(entry.detail).foregroundStyle(.secondary)
-            metadata(entry.precision, bytes: entry.bytes, license: entry.license, memory: entry.memoryEstimate)
-            if let transfer = models.downloads[entry.id] {
-                if transfer.isRunning { ProgressView(value: min(1, max(0, transfer.fraction))) }
-                Text(transfer.message).font(.callout).foregroundStyle(.secondary)
-            }
-            downloadAction(entry).buttonStyle(.borderedProminent)
-            Link("Model source and license", destination: entry.sourceURL)
-        }
-    }
-
-    private func installedDetail(_ model: StudioModel) -> some View {
-        detail(model.name, kind: model.kind) {
-            metadata(model.precision, bytes: model.bytes, license: model.license,
-                     memory: studio.memorySamples[model.id]?.description ?? model.memoryEstimate)
-            if model.kind != .lora && !isActive(model) {
-                Button("Use Model") {
-                    if model.kind == .generation { studio.activeGenerationID = model.id }
-                    else { studio.activeEnhancementID = model.id }
+    private func modelDetail(_ item: ModelCatalogRow) -> some View {
+        detail(item.name, kind: item.kind) {
+            if let entry = item.entry { Text(entry.detail).foregroundStyle(.secondary) }
+            if let model = item.model {
+                metadata(model.precision, bytes: model.bytes, license: item.entry?.license ?? model.license)
+                memoryDetails(kind: model.kind, variant: model.variant)
+                if model.kind != .lora {
+                    Button("Use Model") {
+                        if model.kind == .generation { studio.activeGenerationID = model.id }
+                        else { studio.activeEnhancementID = model.id }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
-                .buttonStyle(.borderedProminent)
+            } else if let entry = item.entry {
+                metadata(entry.precision, bytes: entry.bytes, license: entry.license)
+                memoryDetails(kind: entry.kind, variant: entry.variant)
+                if let transfer = models.downloads[entry.id] {
+                    if transfer.isRunning && !transfer.isCancelling {
+                        ProgressView(value: min(1, max(0, transfer.fraction)))
+                    }
+                    Text(transfer.message).font(.callout).foregroundStyle(.secondary)
+                }
+                downloadAction(entry).buttonStyle(.borderedProminent)
             }
+            if let entry = item.entry { Link("Model source and license", destination: entry.sourceURL) }
         }
     }
 
@@ -342,7 +353,7 @@ struct ModelManagerView: View {
         }
     }
 
-    private func metadata(_ precision: String, bytes: Int64, license: String, memory: String) -> some View {
+    private func metadata(_ precision: String, bytes: Int64, license: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             if bytes > 0 {
                 Text(precision + " · " + ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))
@@ -350,27 +361,42 @@ struct ModelManagerView: View {
                 Text(precision)
             }
             Text(license)
-            Text(memory)
         }
         .font(.callout)
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
     }
 
-    private func isActive(_ model: StudioModel) -> Bool {
-        switch model.kind {
-        case .generation: studio.activeGenerationID == model.id
-        case .enhancement: studio.activeEnhancementID == model.id
-        case .lora: false
+    private func memoryDetails(kind: ModelKind, variant: String) -> some View {
+        let macMemoryGB = Int(ProcessInfo.processInfo.physicalMemory / 1_073_741_824)
+        return VStack(alignment: .leading, spacing: 5) {
+            if kind == .lora {
+                Text("Memory needs depend on the generation model.")
+                    .foregroundStyle(.secondary)
+            } else if let guidance = RefractCatalog.memoryGuidance(for: variant) {
+                let meetsRecommendation = macMemoryGB >= guidance.recommendedGB
+                let size = guidance.referenceSize
+                Text("\(guidance.recommendedGB) GB unified memory recommended").fontWeight(.semibold)
+                Text(meetsRecommendation
+                     ? "This Mac has \(macMemoryGB) GB and meets the recommendation."
+                     : "This Mac has \(macMemoryGB) GB, below the recommendation.")
+                    .foregroundStyle(meetsRecommendation ? Color.secondary : Color.orange)
+                Text("Estimate for \(size.width) × \(size.height) output. Larger images may need more memory.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("No verified memory recommendation for this model.")
+                    .foregroundStyle(.secondary)
+            }
         }
+        .font(.callout)
+        .textSelection(.enabled)
     }
 
     private func openSection() {
         query = ""
         kind = navigation.kind
-        let hasModels = models.models.contains(where: { $0.kind == navigation.kind })
-        page = hasModels || navigation.kind == .lora ? .installed : .catalog
-        selection = visibleIDs.first
+        let options = visibleRows
+        selection = (options.first { $0.model != nil } ?? options.first)?.id
     }
 
     private func chooseFiles() {
@@ -392,9 +418,8 @@ struct ModelManagerView: View {
             importing = nil
             if let firstModel = imported.first {
                 query = ""
-                page = .installed
                 kind = imported.allSatisfy { $0.kind == firstModel.kind } ? firstModel.kind : nil
-                selection = firstModel.id
+                selection = rows.first { $0.model?.id == firstModel.id }?.id
             }
             if !failures.isEmpty {
                 errorMessage = failures.prefix(4).joined(separator: "\n\n")
