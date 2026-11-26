@@ -1,0 +1,21 @@
+Refract Personal Use License
+
+Copyright (c) 2026 the Refract copyright holders. All rights reserved except
+as expressly granted below.
+
+You may clone, download, inspect, and make local copies of Refract's original
+source code, modify it locally, and build and run it for your own private,
+noncommercial use. The grant covers the original Refract code and assets.
+It does not grant permission to redistribute them or builds derived from them,
+use them commercially, or provide Refract as a service to others.
+
+This license does not limit rights granted by GitHub's Terms of Service or
+applicable law. Third-party material, dependencies, and models remain under
+their respective terms. See Worker/configs for the bundled SDXL resources
+and README.md for runtime and model information.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE, AND NON-INFRINGEMENT. TO THE EXTENT PERMITTED BY LAW, THE COPYRIGHT
+HOLDERS WILL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM USE OF THE SOFTWARE.

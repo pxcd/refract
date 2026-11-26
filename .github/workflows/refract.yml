@@ -25,7 +25,7 @@ jobs:
         run: swift build --disable-sandbox -c release --arch arm64
 
   release:
-    name: Package and publish
+    name: Package and save private draft
     needs: verify
     if: github.ref == 'refs/heads/main'
     runs-on: xcode-27
@@ -70,7 +70,7 @@ jobs:
           /usr/bin/ditto -c -k --keepParent build/Refract.app "build/Refract-${RELEASE_TAG}-arm64.zip"
           cd build
           shasum -a 256 "Refract-${RELEASE_TAG}-arm64.zip" > SHA256SUMS.txt
-      - name: Publish private release
+      - name: Save maintainer-only draft
         if: steps.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,6 +78,9 @@ jobs:
         run: |
           existing="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" --jq ".[] | select(.ref == \"refs/tags/$RELEASE_TAG\") | .ref")"
           test -z "$existing"
-          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --title "Refract ${RELEASE_TAG#v}" \
+          mkdir -p build/release
+          jq -e '{revision, sourceSHA256, result, appTreeSHA256, executableSHA256}' \
+            build/provenance.json > build/release/provenance.json
+          gh release create "$RELEASE_TAG" --draft --target "$GITHUB_SHA" --title "Refract ${RELEASE_TAG#v}" \
             --notes "Personal build for Apple Silicon Macs running macOS 27 or later. The app is ad-hoc signed and bundles its Python runtime. Model weights are managed separately in the app." \
-            "build/Refract-${RELEASE_TAG}-arm64.zip" build/SHA256SUMS.txt build/provenance.json
+            "build/Refract-${RELEASE_TAG}-arm64.zip" build/SHA256SUMS.txt "build/release/provenance.json"

@@ -2,6 +2,10 @@
 
 A local image studio for Apple Silicon Macs running macOS 27 or later. Generate uses SDXL single-file checkpoints and weighted LoRAs. Enhance restores and upscales stills with SeedVR2. Both workspaces share a serial queue and an aligned before-and-after viewer.
 
+## Source and personal use
+
+You may clone, build, and run Refract for personal use under the [Refract Personal Use License](LICENSE). Third-party files, runtimes, and models have their own terms. App downloads and pull requests are restricted to maintainers and collaborators.
+
 ## Build
 
 Use Xcode's Swift toolchain and uv on an Apple Silicon Mac. From the repository root:
@@ -46,6 +50,6 @@ For a curated download, add a matching variant and a pinned file manifest in `Mo
 
 GitHub Actions builds and tests pull requests and pushes to `main` on the Apple Silicon Xcode 27 runner. Hardware acceptance tests use separately installed model weights and run locally.
 
-After a passing build on `main`, GitHub Actions publishes a private release whenever `CFBundleShortVersionString` in `Resources/Info.plist` advances. It creates the version tag, packages and verifies the ad-hoc-signed app, and attaches the ZIP, SHA-256 checksum and build receipt. Model weights stay in the user’s model library.
+After a passing build on `main`, GitHub Actions saves a restricted draft release whenever `CFBundleShortVersionString` in `Resources/Info.plist` advances. It packages and verifies the ad-hoc-signed app and attaches the ZIP, SHA-256 checksum, and a build receipt with no local paths. Model weights stay in the user’s model library.
 
 A second workflow squash-merges clean, passing PRs from trusted same-repository contributors when all changed paths qualify for automatic merging. Changes to the UI, visual app resources, workflows or other unclassified files remain open for manual review. Version bumps in the bundle metadata are eligible for automatic merging. A successful automated merge dispatches the main build and release workflow.
