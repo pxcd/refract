@@ -1,5 +1,5 @@
 {
-  "version": "4.3.18",
+  "version": "4.3.19",
   "layout": "native-layers-v1",
   "files": {
     ".opencode/BASELINE.md": "2054ef053c13fc7de7249d0ceb27a77660cab3e8b21ad49717d8c45e3bdee415",
@@ -16,8 +16,8 @@
     ".opencode/plugins/continuation-guard/index.js": "a7e9725733211316d68311533db7969105d97864a3bb047f9c794d0041020346",
     ".opencode/plugins/qa-retry-guard/guard.test.mjs": "a79b855d83177348e84e1ba8afcf552a06833623695b6d34b150b63760b1ba1b",
     ".opencode/plugins/qa-retry-guard/index.js": "8e7cb5088b04d1d693c0c7de9589f4d4f4f37ad61c9206ec6e85c0b27c1df6cf",
-    ".opencode/plugins/qa-retry-guard/staged-qa.mjs": "0c69e0a9faa7f5917304f9854d0c845348e7b676f6397eed1433612b7dd65e3f",
-    ".opencode/plugins/qa-retry-guard/staged-qa.test.mjs": "c723c3e93750f7d0a217a5fa0f9309ab88bc98de9355d10c82dbb1b7350c97d4",
+    ".opencode/plugins/qa-retry-guard/staged-qa.mjs": "c674d73fae1808f48e84f5792114fc706c3663fd636a8f498d73c3e2a0aa9c8e",
+    ".opencode/plugins/qa-retry-guard/staged-qa.test.mjs": "c86cbaa245f05c5530b1b7ee15bf3ec9d08af3fd3bec1394d8efc0dcd905d854",
     ".opencode/plugins/step-limit-compat/index.js": "a2836d5b34128aea137f5ee1de94d690a76926155868eba9815eef2581e59089",
     ".opencode/plugins/step-limit-compat/normalize.mjs": "1ec9ce46dd930213b51aa9cc42ccca47cb9be3ae45b2a34be05bbeed6c1923a0",
     ".opencode/plugins/step-limit-compat/normalize.test.mjs": "696f1b32f83954722ab328313cc3b4409dc87453ee4e6a3fe996c8fb8910b7c1",
