@@ -1,5 +1,5 @@
 {
-  "version": "4.3.17",
+  "version": "4.3.18",
   "layout": "native-layers-v1",
   "files": {
     ".opencode/BASELINE.md": "2054ef053c13fc7de7249d0ceb27a77660cab3e8b21ad49717d8c45e3bdee415",
@@ -16,8 +16,8 @@
     ".opencode/plugins/continuation-guard/index.js": "a7e9725733211316d68311533db7969105d97864a3bb047f9c794d0041020346",
     ".opencode/plugins/qa-retry-guard/guard.test.mjs": "a79b855d83177348e84e1ba8afcf552a06833623695b6d34b150b63760b1ba1b",
     ".opencode/plugins/qa-retry-guard/index.js": "8e7cb5088b04d1d693c0c7de9589f4d4f4f37ad61c9206ec6e85c0b27c1df6cf",
-    ".opencode/plugins/qa-retry-guard/staged-qa.mjs": "fdcdf1a7db728e1157efe32375d0e689b997921f4fc597c527d894c2e50caa2b",
-    ".opencode/plugins/qa-retry-guard/staged-qa.test.mjs": "e61458d27d3bd7539bc6f43abe1603539e90da28baaabe5cb859c45d60592929",
+    ".opencode/plugins/qa-retry-guard/staged-qa.mjs": "0c69e0a9faa7f5917304f9854d0c845348e7b676f6397eed1433612b7dd65e3f",
+    ".opencode/plugins/qa-retry-guard/staged-qa.test.mjs": "c723c3e93750f7d0a217a5fa0f9309ab88bc98de9355d10c82dbb1b7350c97d4",
     ".opencode/plugins/step-limit-compat/index.js": "a2836d5b34128aea137f5ee1de94d690a76926155868eba9815eef2581e59089",
     ".opencode/plugins/step-limit-compat/normalize.mjs": "1ec9ce46dd930213b51aa9cc42ccca47cb9be3ae45b2a34be05bbeed6c1923a0",
     ".opencode/plugins/step-limit-compat/normalize.test.mjs": "696f1b32f83954722ab328313cc3b4409dc87453ee4e6a3fe996c8fb8910b7c1",
@@ -25,7 +25,7 @@
     ".opencode/roles.py": "af97f192996d7990715dcddbf9031402c5b5a23c6867e0b30b6448c13a7878c6",
     ".opencode/run-local.py": "f4fae7132cf7d0152b26cfa47b28b61f0c0fb05d836be78d7b1b4971d0676dee",
     ".opencode/scan-gitleaks.py": "a1ef1681b3040ee59f427fa902f2e3baacdb02a36651e3c881c6e72da53c4741",
-    ".opencode/verify-scaffold.py": "9004e0162f01449110d93ffa58378a30ae2e7e57f2a283096b8cc7f8fc64f4f4",
+    ".opencode/verify-scaffold.py": "7abc02403e4c50079287a3992df03513bdbd2db59fb9eb1b1078b74a96af3a3d",
     "opencode.json": "1dae937fb2a8ee723da4cfa88bbb0ae94a687b4c691a5e57248a01cabe32a90c"
   },
   "starters": {
