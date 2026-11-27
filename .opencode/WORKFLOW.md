@@ -1,0 +1,294 @@
+# OpenCode Cartman owns orchestration; Codex intervention is optional
+
+Native configuration loads `.opencode/BASELINE.md` for shared engineering defaults,
+independently of project-owned instructions. Read root AGENTS.md, when present, for the project's commands, invariants, access policy,
+delivery and acceptance. `.opencode/PROJECT.md` holds optional additional
+project references. User instructions
+remain authoritative. Keep handoffs and evidence scoped to the current task.
+
+## Two levels, one active execution coordinator
+
+GPT-6.2 Sol Medium runs as the native OpenCode Cartman. It owns planning, routing,
+checkpoints, recovery, integration and independent verification. Butters implements
+behavior and UI; fresh Kyle independently verifies;
+fresh Stan performs final cloud code review. Chef is a read-only planning advisor.
+Cartman can launch only Butters, Kyle, Stan and Chef as native subagents.
+Subagents cannot delegate further.
+Keep local inference sequential by default.
+
+Project-owned instructions may still use the old role labels: Arbiter means
+Cartman, SCV means Butters, Overlord means Kyle, and Sentry means Stan. Treat those
+as historical labels, not native IDs to dispatch. The former probe UI builder is
+retired: Butters implements both behavior and presentation. Preserve substantive
+project constraints while using the current native role IDs. Read HANDOFFS.md for
+brief in-character banter, including comic blame, followed by factual handoffs
+and evidence; never fabricate another agent's response or technical responsibility.
+
+The coordinator has two supported primary entry IDs: `build`, used by the normal
+Desktop composer, and `Cartman`, used by explicit CLI/API selection. Both load the
+same Cartman policy and bounded delegation rules. The default named agent remains
+Cartman. Model selection alone is not proof of routing, but Desktop users do not
+need an @mention, hidden picker or additional command to invoke this policy.
+
+Codex sits above Cartman for optional task definition, architecture advice,
+concrete escalation and final evidence review. Cartman must be able to execute
+an authorized task end-to-end without Codex polling, routine checkpoint approval
+or repeated intervention. Do not run two competing coordinator loops or have
+Codex dispatch duplicate workers alongside Cartman. Direct OpenCode use is fully
+supported; the launcher is only an optional handoff/diagnostic entry point.
+
+Cartman and Stan are routed to cloud GPT-6.2 Sol Medium. Chef uses cloud
+GPT-6.2 Astra High when called.
+Butters and Kyle remain local;
+maintenance helpers remain local unless the project contract explicitly authorizes
+other helper routes. Provider registration, endpoint locality and plugin review
+belong to installation or an explicit routing change/diagnostic. For routine tasks,
+use the loaded native roles and configured routes; a provider ID alone is not
+independent proof of endpoint locality. Do not install software, reconfigure providers or start competing GPU
+workloads without authorization. Configuration discovery does not run inference.
+
+## Task entry and discovery
+
+A fresh scaffold is usable immediately. There is no onboarding session, completed
+questionnaire or READY marker required before investigation, implementation or
+native worker delegation. Project-specific instructions can be added later.
+
+Start with the actual cwd, branch, dirty status and task-scoped diff, then read
+only applicable project rules and relevant scripts/CI. Desktop `build` and explicit
+`Cartman` are both valid primary entries. Use native subagent calls directly;
+ordinary repository work does not require rediscovering OpenCode itself. For a
+committed documentation-only shipment, dispatch Kyle once scope and relevant
+gates are known; no implementation worker is needed.
+
+Do not inspect API schemas, enumerate runtime configuration/providers, load the
+OpenCode skill, inventory processes or query historical sessions as routine startup.
+Investigate those only for an observed routing/tool/transport failure, a concrete
+competing-run signal or an explicit OpenCode task. Check only the implicated state;
+a historical task note alone does not require a session-history audit. Workers
+confirm their own assigned role and location, not a primary Cartman ID.
+
+Keep tool output bounded: use scoped diff/stat, targeted search and selected JSON
+fields. Do not dump all tracked paths, entire configs or large logs. Save long gate
+output in project-local evidence and read relevant tails/sections. If output was
+truncated, rerun a narrower read rather than opening external shell-cache files.
+Read each unchanged fact once per decision; independent QA still gathers its own
+evidence. Revalidate branch/head/base and PR gates before consequential publication,
+merge and cleanup, not on every reasoning turn.
+
+Read existing project instructions and honor substantive access, invariants and
+acceptance rules. Legacy scaffold Status: READY/UNCONFIGURED markers and empty
+starter fields are not execution gates. Do not demand that the user fill them or
+rename a valid Desktop session before beginning the actual task. Preserve existing
+project-owned files; do not rewrite them merely to remove old scaffolding prose.
+
+Discover relevant architecture, scripts, tests and CI as part of the task, through
+bounded source inspection or a worker assignment. Unknown commands are a reason
+to inspect the repository, not to stop all work. Ask only when a specific affected
+action needs a decision or permission the task/repo cannot establish; continue
+independent safe work. Default source access is relevant task code and synthetic
+fixtures, excluding credentials, private runtime data and unrelated archives.
+Live services/device changes, installs and publication still require authorization.
+Explicit project/user restrictions continue to apply.
+
+The optional launcher validates repository config compatibility before dispatch;
+this is not proof of machine-global/session settings or endpoint locality. Native
+instructions are policy rather than an OS sandbox. Inspect effective routing when
+there is a concrete mismatch; do not repeat broad preflight inventories each turn.
+
+## Repository scope
+
+Apply the session repository boundary in `.opencode/BASELINE.md` to Cartman and
+all children. Confirm the recorded absolute session directory and resolved
+repository root before work, pass that root and a repo-local evidence directory
+in every handoff, and confirm each child's recorded directory before its task.
+Never submit/resume a task in an unsuitable checkout or silently move its session.
+A Codex handoff does not select a Codex worktree. External checkout/worktree,
+historical-evidence access and directory changes require explicit scoped user
+authorization. Arrange approvals before unattended batches; unexpected access
+requirements produce a preserved checkpoint, never a permission bypass.
+Keep useful raw findings/logs under `.opencode/evidence/<task>/`; routine chat
+needs no file. Never force-add evidence or include it in shipment scope; source
+and intentional deliverable documentation still use normal project paths.
+Keep machine provider/auth and native session data in their normal
+stores, separate from project evidence. Do not copy or relocate old evidence.
+
+## Native task loop
+
+1. Confirm absolute checkout, dirty state, issue
+   ownership and any active session.
+   Preserve existing work and never duplicate a possibly completed operation.
+   Record original scope, acceptance, allowed paths and invariants in
+   `.opencode/evidence/<task>/task.md`; avoid copying the whole chat/history.
+2. Inspect relevant source/tests and give a bounded milestone with known facts,
+   references, constraints, evidence directory and one meaningful first check.
+   Route implementation of behavior and UI to Butters. A view filename does not
+   imply presentation-only; preserve behavioral invariants across mixed changes.
+3. One implementation writer per checkout. Concurrent writes require isolated
+   worktrees and explicit integration ownership; creating an external worktree
+   first requires scoped user authorization. Worktrees do not isolate models.
+   Verify native session directories rather than trusting prompts to change cwd.
+4. At a worker checkpoint, inspect the actual diff and executed check output.
+   Resume a healthy native child session only for related bounded work. Repeated
+   no-progress attempts require a changed hypothesis or assignment, not blind
+   renewal. Provider/transport failures require infrastructure diagnosis, not
+   speculative application edits. Keep useful progress and recover autonomously
+   while productive; do not return routine recovery decisions to Codex.
+5. Freeze implementation and dispatch NEW Kyle with original acceptance,
+   invariants, paths/diff and required checks, without builder verdicts. QA reads
+   enough source/fixtures to assess correctness and executes its own gates.
+   Record before/after identities including relevant untracked files. QA never
+   repairs. Supported FAIL returns to the responsible builder, followed by NEW
+   independent QA of the repaired source. Never waive acceptance to obtain PASS.
+6. After Kyle QA, dispatch NEW Stan for independent code review, with original
+   requirements/invariants, base/head SHAs or frozen source identities, scoped diff,
+   relevant paths and raw QA evidence. Cloud-source authorization must cover this
+   review. Stan reads/searches only and returns PASS/FAIL/BLOCKED with file/line
+   findings and limits; it does not execute tests, repair or publish. Route supported
+   defects through the responsible builder, then obtain fresh Kyle QA and Stan
+   review after repairs. Verify source identity before/after both independent roles.
+   For PR review, record only against the exact reviewed head SHA using the project
+   gate; later commits invalidate the receipt. Review before commit requires proving
+   the frozen source matches the committed tree, otherwise review the committed head.
+7. Distinguish independent QA/review, hosted CI, human GUI acceptance and publication.
+   Stop at the project's agreed boundary. App launches, installs, destructive Git,
+   commits/pushes, deployments and external messages need task authorization.
+   Escalate genuine permissions, unresolved concrete blockers or user decisions.
+   Codex can assist when requested; its availability is not an execution gate.
+
+## SCM and delivery
+
+Use one focused, short-lived feature branch from the current default branch.
+Inspect the actual diff, dirty work, remotes and applicable project rules before
+editing or staging. Preserve unrelated work; stage only intended files and never
+include credentials, private data or generated artifacts without authorization.
+Use coherent commits; a small change usually needs one commit and one PR, not a
+release/develop branch hierarchy. Useful checkpoints are appropriate for longer work.
+
+Keep a scaffold install or upgrade in its own delivery, separate from product
+changes. If both are already present, preserve the work and inspect staging and
+branch history before proposing a split. Fix managed scaffold files in the
+maintained scaffold repository. If review finds a defect in those files in a
+consumer checkout, record the finding and stop that repair there. Apply the
+upstream fix through `newoc` when authorized. Project-owned instructions and
+configuration overrides still follow the project's own workflow.
+
+For a scaffold installation or upgrade, start the native Kyle handoff with
+`Scaffold QA: staged` on its own line. After confirming the checkout and frozen
+scope, Kyle's first executable gate is `git --no-optional-locks show :.opencode/verify-scaffold.py | python3.12 -I - --qa`.
+Its receipt covers the staged manifest, coordinator wiring and override regressions,
+and the managed plugin suites. Run the project's other applicable gates as well.
+The managed Cartman and Desktop build defaults match. Project step limits may
+differ; each must be a positive integer. Coordinator permission overrides must match.
+
+When verifying a repair, give Kyle the original reviewer's precise finding
+and revision, with the relevant user or tracked project requirement. Keep the
+observable defect separate from a proposed remedy. A scratch probe or previous
+handoff may supply evidence but cannot establish a new requirement. If its
+assertion conflicts with the written contract, correct the QA assignment and
+resume the pending gates on the same snapshot. Preserve any independently
+supported defect and seek a decision only for a genuine unresolved policy conflict.
+
+1. Run the project's relevant verification and obtain independent Kyle QA.
+   Before publication, scan the staged tree and branch history locally with
+   `python3 -I .opencode/scan-gitleaks.py ship <verified-base-oid> <head-oid>`.
+   A matching successful /ship scan covers that same snapshot. Recheck changed
+   commits or staged content. Stop on findings or an unavailable scanner.
+   Keep credential values out of prompts and evidence.
+   When authorized, commit and push the feature branch and open/update a PR to
+   the verified default branch. A draft PR may precede final QA/human acceptance.
+2. Obtain NEW Stan review of the exact final PR head, with base identity and
+   raw QA evidence. Resolve supported findings through builders, repeat affected
+   checks and obtain fresh QA/review after source changes. Record the actual
+   review with the repository's existing helper when available; never invent a
+   passing check, impersonate human approval or assume every repo has a review gate.
+3. Wait for required CI/review checks, resolve discussions and complete applicable
+   human acceptance as defined below. If integration with the default branch changes the PR head,
+   repeat relevant verification and review. Follow the repository's exact receipt
+   invalidation policy; no earlier-head approval applies to later code.
+4. With explicit merge authorization, squash-merge the PR on the host when the
+   repository supports/requires squash. Honor a different project merge policy.
+   For GitHub, set `pr_url` to the verified PR URL and `stan_reviewed_head` to
+   the full head SHA from Stan's PASS for that PR. If Stan reviewed only an
+   uncommitted tree, obtain a PASS identifying the committed PR head. Run the
+   native command with these values so project shell permissions still apply.
+
+   ```sh
+   gh pr merge "$pr_url" --squash --match-head-commit "${stan_reviewed_head:?missing reviewed PR head}"
+   ```
+
+   Replace `--squash` with `--merge` or `--rebase` only
+   for an applicable project policy. On head mismatch, stop, repeat affected
+   verification and obtain fresh independent review. Never replace the argument
+   with the latest head or retry without the condition. For other hosts require
+   an equivalent atomic head condition. Verify actual merged state before
+   cleanup, including when the host queues the PR.
+   Never independently merge into local main and push around the remote PR gates.
+5. In a clean checkout, switch to the default branch and update by fast-forward
+   only. Reconcile divergence rather than resetting useful work. Verify the merged
+   revision with the project's integration/build checks; do not blindly repeat
+   expensive unchanged-source checks. Report a failure; do not silently roll back.
+6. Clean up only the completed, authorized feature branch/worktree. Check for
+   dirty files, additional commits, concurrent sessions and other worktree users.
+   Archive app-managed worktrees through their supported lifecycle; otherwise
+   remove only a clean completed worktree. Confirm the host reports the exact PR
+   head merged and the intended changes are integrated before local deletion.
+   Squash merges may fail Git's ancestry-based deletion check; investigate and
+   verify integration before any specifically scoped forced local deletion.
+   Verify host auto-deletion of the merged remote branch rather than assuming it.
+   If it remains, report it or use an explicitly authorized cleanup mechanism;
+   never bypass native remote-ref deletion denials or delete unrelated branches.
+
+Authorization is scoped: commit/push does not authorize merging; opening a PR does
+not authorize merging either. Explicit commit/push/merge authorization includes
+routine cleanup of that completed branch, subject to the checks above. "Ship it"
+means the full commit/push/PR/merge/verification/cleanup flow in this scaffold,
+unless the user or project narrows it. Stop for
+failed gates, unresolved findings, missing required human acceptance or genuine
+permissions; do not repeatedly ask for routine steps already authorized.
+Human acceptance must name an affected criterion: for example microphone/device
+behavior, visual quality or a product decision that automated QA cannot establish.
+Surface known manual criteria early so the user can check them while automated
+gates run. Carry forward recorded acceptance when it still covers the same
+behavior and satisfies the project's policy.
+If no affected manual criterion applies and QA/review/required checks pass, existing
+shipping/merge authorization is sufficient; do not ask for a second generic approval.
+A documentation-only change does not automatically require app/device testing.
+Honor explicit project rules requiring owner approval for every PR or a separately
+required sign-off; do not silently weaken them or mark unperformed manual checks as
+passed. State the exact outstanding criterion and source when stopping.
+
+Native coordinator permissions preapprove only an explicit single `codex/*` branch
+push to `origin`, optionally with `-u` or `--set-upstream`. Use that canonical form
+only after task authorization and confirming the target is a feature branch, not
+the repository's default/protected branch. Other push forms, destinations, multiple
+refs and colon refspecs still ask; force/mirror pushes and remote-ref deletion remain
+denied. Workers/helpers cannot push. A stricter project permission can still ask or
+deny. Never rewrite a guarded command to evade its approval; report a genuine gate.
+Configuration is policy, not authorization or proof of host enforcement.
+
+## Boundaries and evidence
+
+Native step limits are checkpoint backstops, not lifetime quotas. When Cartman's
+own cap fires, preserve session IDs, completed milestones, source/check state and
+next action; incomplete execution is not automatically BLOCKED or PASS. Do not
+claim a model will stop merely because a prompt says STOP.
+
+Builders return VERIFIED_MILESTONE, CHECKPOINT or BLOCKED. QA returns PASS, FAIL
+or BLOCKED with commands, underlying exits, test counts/skips, raw log paths,
+source identity and concrete findings. Successful agent process exit or prose
+alone is not acceptance. Compilation does not establish runtime or visual QA.
+Avoid repeated successful checks on unchanged source without a specific concern.
+Keep raw logs outside the model context and inspect bounded relevant excerpts.
+
+For POSIX checks retain the underlying status, for example:
+
+```sh
+if <check> > <evidence-log> 2>&1; then check_rc=0; else check_rc=$?; fi
+printf 'CHECK_EXIT=%s\n' "$check_rc"
+exit "$check_rc"
+```
+
+Permissions are not OS containment. Unrestricted shell can read/write files even
+when dedicated tools are denied; inspect commands and preserve source identities.
+No hard runtime timeout or machine-validated verdict receipt is claimed by the
+optional launcher. Project CI remains a deterministic check entry point.

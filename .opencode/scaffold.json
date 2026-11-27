@@ -1,0 +1,37 @@
+{
+  "version": "4.3.19",
+  "layout": "native-layers-v1",
+  "files": {
+    ".opencode/BASELINE.md": "2054ef053c13fc7de7249d0ceb27a77660cab3e8b21ad49717d8c45e3bdee415",
+    ".opencode/CONTINUATION.md": "3b81a371620c2e83262586229b279ce308d96ef6310ee098ea96ff001a5d211c",
+    ".opencode/HANDOFFS.md": "28d5296e60f086353713d23e0366b8228fb9ad4d38588af33083854c51958815",
+    ".opencode/WORKFLOW.md": "895d8b1256c46c3627e45422b682ccb5d4eba06fb106af504b777dee0f7c5796",
+    ".opencode/agents/Butters.md": "65bc232db54a4e1c3d9544f7ee908c25d9a3b60c900ad363a448f1a700e9f59a",
+    ".opencode/agents/Cartman.md": "77a4656a42f4484dcaa11000b36d8ee0da0c0504236895271a16cd9279432717",
+    ".opencode/agents/Chef.md": "cecf5dd3d7e9379824ff81a0088bf5a60746ba6cb2d943f0554b299bb0bc4c68",
+    ".opencode/agents/Kyle.md": "e9e994970f8dd5dbf469d45cce1d081507446320196807f3099dccdd725b2746",
+    ".opencode/agents/Stan.md": "e4dd25191bcabed50f427188339503bad3cad28d6e61431cdbd966502e752235",
+    ".opencode/local.example.json": "43689cdff5c14db64358a249fce9aba6f3e94cffa4f60bc0c7d44654849fc393",
+    ".opencode/plugins/continuation-guard/guard.test.mjs": "353c8015b709a84c740e81a1906cca17fab991012e3fb0af8a977ee10f62c817",
+    ".opencode/plugins/continuation-guard/index.js": "a7e9725733211316d68311533db7969105d97864a3bb047f9c794d0041020346",
+    ".opencode/plugins/qa-retry-guard/guard.test.mjs": "a79b855d83177348e84e1ba8afcf552a06833623695b6d34b150b63760b1ba1b",
+    ".opencode/plugins/qa-retry-guard/index.js": "8e7cb5088b04d1d693c0c7de9589f4d4f4f37ad61c9206ec6e85c0b27c1df6cf",
+    ".opencode/plugins/qa-retry-guard/staged-qa.mjs": "c674d73fae1808f48e84f5792114fc706c3663fd636a8f498d73c3e2a0aa9c8e",
+    ".opencode/plugins/qa-retry-guard/staged-qa.test.mjs": "c86cbaa245f05c5530b1b7ee15bf3ec9d08af3fd3bec1394d8efc0dcd905d854",
+    ".opencode/plugins/step-limit-compat/index.js": "a2836d5b34128aea137f5ee1de94d690a76926155868eba9815eef2581e59089",
+    ".opencode/plugins/step-limit-compat/normalize.mjs": "1ec9ce46dd930213b51aa9cc42ccca47cb9be3ae45b2a34be05bbeed6c1923a0",
+    ".opencode/plugins/step-limit-compat/normalize.test.mjs": "696f1b32f83954722ab328313cc3b4409dc87453ee4e6a3fe996c8fb8910b7c1",
+    ".opencode/preflight.py": "673a7f158dafa37ff3da9c0349e1e84b2fa5214a6dedea459c8b9bae2c54ec10",
+    ".opencode/roles.py": "af97f192996d7990715dcddbf9031402c5b5a23c6867e0b30b6448c13a7878c6",
+    ".opencode/run-local.py": "f4fae7132cf7d0152b26cfa47b28b61f0c0fb05d836be78d7b1b4971d0676dee",
+    ".opencode/scan-gitleaks.py": "a1ef1681b3040ee59f427fa902f2e3baacdb02a36651e3c881c6e72da53c4741",
+    ".opencode/verify-scaffold.py": "7abc02403e4c50079287a3992df03513bdbd2db59fb9eb1b1078b74a96af3a3d",
+    "opencode.json": "1dae937fb2a8ee723da4cfa88bbb0ae94a687b4c691a5e57248a01cabe32a90c"
+  },
+  "starters": {
+    "AGENTS.md": {
+      "sha256": "e23038e270a3ec67aa207b46128b22c7e0cea83e14fdd8d08a8725cca1d91a41",
+      "project_name": "scaffold-v4.3.8"
+    }
+  }
+}
