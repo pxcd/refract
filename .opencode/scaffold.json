@@ -1,0 +1,33 @@
+{
+  "version": "4.3.11",
+  "layout": "native-layers-v1",
+  "files": {
+    ".opencode/BASELINE.md": "2054ef053c13fc7de7249d0ceb27a77660cab3e8b21ad49717d8c45e3bdee415",
+    ".opencode/CONTINUATION.md": "e1e543fc675efa24c7b2c80582e143065fc47e5dfe7f87e56ebb63f7e3d23963",
+    ".opencode/HANDOFFS.md": "28d5296e60f086353713d23e0366b8228fb9ad4d38588af33083854c51958815",
+    ".opencode/WORKFLOW.md": "852c8d9cb2405f802cf5c7b33e20314827e277e389d8181bb8ed566c099488aa",
+    ".opencode/agents/Butters.md": "65bc232db54a4e1c3d9544f7ee908c25d9a3b60c900ad363a448f1a700e9f59a",
+    ".opencode/agents/Cartman.md": "22bd394f70d7deab0d2706aaf3e851b8a16f7ad424ae82ba566d9e90f6b47e6c",
+    ".opencode/agents/Chef.md": "cecf5dd3d7e9379824ff81a0088bf5a60746ba6cb2d943f0554b299bb0bc4c68",
+    ".opencode/agents/Kyle.md": "877e28dc845f65517e5c51c2fbecfdf11d1aaa58a95bc79e5aa4293acce46b53",
+    ".opencode/agents/Stan.md": "e4dd25191bcabed50f427188339503bad3cad28d6e61431cdbd966502e752235",
+    ".opencode/local.example.json": "43689cdff5c14db64358a249fce9aba6f3e94cffa4f60bc0c7d44654849fc393",
+    ".opencode/plugins/continuation-guard/guard.test.mjs": "9cacbc0736e75d8c4671143dd1b627a2bcf9b3a5fd589245835d6a28881e20bb",
+    ".opencode/plugins/continuation-guard/index.js": "5b90f906df1d80219603dae305d3605820b1a35b5d46dac884405bb49ac85230",
+    ".opencode/plugins/step-limit-compat/index.js": "a2836d5b34128aea137f5ee1de94d690a76926155868eba9815eef2581e59089",
+    ".opencode/plugins/step-limit-compat/normalize.mjs": "1ec9ce46dd930213b51aa9cc42ccca47cb9be3ae45b2a34be05bbeed6c1923a0",
+    ".opencode/plugins/step-limit-compat/normalize.test.mjs": "696f1b32f83954722ab328313cc3b4409dc87453ee4e6a3fe996c8fb8910b7c1",
+    ".opencode/preflight.py": "77644f97018fa08744ee687011daeb172c874c7abb0fb70fbfd56b4d3952f00e",
+    ".opencode/roles.py": "af97f192996d7990715dcddbf9031402c5b5a23c6867e0b30b6448c13a7878c6",
+    ".opencode/run-local.py": "f4fae7132cf7d0152b26cfa47b28b61f0c0fb05d836be78d7b1b4971d0676dee",
+    ".opencode/scan-gitleaks.py": "a1ef1681b3040ee59f427fa902f2e3baacdb02a36651e3c881c6e72da53c4741",
+    ".opencode/verify-scaffold.py": "18dcb05da6f3da5b24f4fbcef2e2668ae64ceccb228f1f5dd7b5d72413002f9b",
+    "opencode.json": "60b36a12538b57f212165f2a56f069d75fd1736188bb82ebfb6c2638947e5a2c"
+  },
+  "starters": {
+    "AGENTS.md": {
+      "sha256": "e23038e270a3ec67aa207b46128b22c7e0cea83e14fdd8d08a8725cca1d91a41",
+      "project_name": "scaffold-v4.3.8"
+    }
+  }
+}

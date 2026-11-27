@@ -6,3 +6,11 @@ build/
 __pycache__/
 *.pyc
 .runtime-build/
+.env
+.env.*
+!.env.example
+.opencode/evidence/
+.worktrees/
+*.py[cod]
+.opencode/local.json
+.opencode/.worker.lock
