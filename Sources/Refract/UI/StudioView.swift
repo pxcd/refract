@@ -372,10 +372,12 @@ struct StudioView: View {
     @ViewBuilder private var resultArea: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let result = activeResult {
-                ImageViewport(original: result.original, enhanced: result.enhanced)
+                ImageViewport(original: result.original, enhanced: result.enhanced,
+                              showsInteractionHelp: workspace == .enhance)
                     .frame(maxHeight: .infinity)
             } else if let sourcePreview {
-                ImageViewport(original: sourcePreview).frame(maxHeight: .infinity)
+                ImageViewport(original: sourcePreview, showsInteractionHelp: workspace == .enhance)
+                    .frame(maxHeight: .infinity)
             } else {
                 Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
             }

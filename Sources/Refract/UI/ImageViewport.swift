@@ -56,6 +56,7 @@ private actor PreviewLoader {
 struct ImageViewport: View {
     let original: URL
     var enhanced: URL?
+    let showsInteractionHelp: Bool
     @Environment(\.displayScale) private var displayScale
     @State private var loaded: LoadedImagePair?
     @State private var loadError: String?
@@ -73,8 +74,14 @@ struct ImageViewport: View {
                     ContentUnavailableView("Preview unavailable", systemImage: "photo.badge.exclamationmark",
                                            description: Text(loadError))
                 } else if let loaded, loaded.pair == pair {
-                    CanvasBridge(images: loaded, scale: displayScale, split: $split, zoom: $zoom)
-                        .help(enhanced == nil ? "Pinch to zoom. Drag to pan." : "Drag the divider or press the arrow keys to compare. Pinch to zoom and drag the image to pan.")
+                    Group {
+                        let canvas = CanvasBridge(images: loaded, scale: displayScale, split: $split, zoom: $zoom)
+                        if showsInteractionHelp {
+                            canvas.help(enhanced == nil ? "Pinch to zoom. Drag to pan." : "Drag the divider or press the arrow keys to compare. Pinch to zoom and drag the image to pan.")
+                        } else {
+                            canvas
+                        }
+                    }
                         .accessibilityLabel(enhanced == nil ? "Image preview" : "Before and after comparison")
                         .accessibilityValue(enhanced == nil ? "" : "Before covers \(Int(split * 100)) percent")
                         .accessibilityAdjustableAction { direction in
