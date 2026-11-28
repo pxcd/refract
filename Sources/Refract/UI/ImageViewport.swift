@@ -57,6 +57,9 @@ struct ImageViewport: View {
     let original: URL
     var enhanced: URL?
     let showsInteractionHelp: Bool
+    private var interactionHelp: String? {
+        showsInteractionHelp ? (enhanced == nil ? "Pinch to zoom. Drag to pan." : "Drag the divider or press the arrow keys to compare. Pinch to zoom and drag the image to pan.") : nil
+    }
     @Environment(\.displayScale) private var displayScale
     @State private var loaded: LoadedImagePair?
     @State private var loadError: String?
@@ -74,19 +77,14 @@ struct ImageViewport: View {
                     ContentUnavailableView("Preview unavailable", systemImage: "photo.badge.exclamationmark",
                                            description: Text(loadError))
                 } else if let loaded, loaded.pair == pair {
-                    Group {
-                        let canvas = CanvasBridge(images: loaded, scale: displayScale, split: $split, zoom: $zoom)
-                        if showsInteractionHelp {
-                            canvas.help(enhanced == nil ? "Pinch to zoom. Drag to pan." : "Drag the divider or press the arrow keys to compare. Pinch to zoom and drag the image to pan.")
-                        } else {
-                            canvas
-                        }
-                    }
+                    CanvasBridge(images: loaded, scale: displayScale, split: $split, zoom: $zoom,
+                                 help: interactionHelp)
                         .accessibilityLabel(enhanced == nil ? "Image preview" : "Before and after comparison")
                         .accessibilityValue(enhanced == nil ? "" : "Before covers \(Int(split * 100)) percent")
                         .accessibilityAdjustableAction { direction in
                             split = min(1, max(0, split + (direction == .increment ? 0.05 : -0.05)))
                         }
+                        .accessibilityHint(interactionHelp ?? "")
                     if enhanced != nil {
                         VStack {
                             HStack {
@@ -160,12 +158,14 @@ private struct CanvasBridge: NSViewRepresentable {
     let scale: CGFloat
     @Binding var split: Double
     @Binding var zoom: Double?
+    let help: String?
 
     func makeNSView(context: Context) -> ComparisonCanvas { ComparisonCanvas() }
 
     func updateNSView(_ view: ComparisonCanvas, context: Context) {
         view.onSplit = { split = $0 }
         view.onZoom = { zoom = $0 }
+        if view.toolTip != help { view.toolTip = help }
         view.configure(images: images, displayScale: scale, split: split, zoom: zoom)
     }
 }
